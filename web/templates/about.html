@@ -1,0 +1,86 @@
+{{define "about.html"}}
+{{template "layout" .}}
+{{end}}
+
+{{define "content"}}
+<div class="about-page" style="max-width: 720px; margin: 0 auto; padding: 2rem 1rem;">
+
+    <section style="margin-bottom: 2rem;">
+        <div class="enriched-header">Project</div>
+        <div class="overview-summary">
+            <div class="overview-kv">
+                <span class="overview-label">Name</span>
+                <span>{{.Project.Name}}</span>
+            </div>
+            <div class="overview-kv">
+                <span class="overview-label">Version</span>
+                <span>{{.Project.Version}}</span>
+            </div>
+            <div class="overview-kv">
+                <span class="overview-label">Description</span>
+                <span>{{.Project.Description}}</span>
+            </div>
+            <div class="overview-kv">
+                <span class="overview-label">License</span>
+                <span>{{.Project.License}}</span>
+            </div>
+            <div class="overview-kv">
+                <span class="overview-label">Author</span>
+                <span>{{.Project.Author}}</span>
+            </div>
+        </div>
+    </section>
+
+    <section style="margin-bottom: 2rem;">
+        <div class="enriched-header">Dependencies</div>
+        {{if .Dependencies}}
+        <table class="enriched-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Version</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Dependencies}}
+                <tr>
+                    <td>{{.Name}}</td>
+                    <td>{{.Version}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        {{else}}
+        <div class="overview-summary">
+            <div class="overview-kv">
+                <span class="overview-label">Info</span>
+                <span>Build info not available</span>
+            </div>
+        </div>
+        {{end}}
+    </section>
+
+    <section>
+        <div class="enriched-header">System</div>
+        <div class="overview-summary">
+            <div class="overview-kv">
+                <span class="overview-label">Go Version</span>
+                <span>{{.System.GoVersion}}</span>
+            </div>
+            <div class="overview-kv">
+                <span class="overview-label">OS</span>
+                <span>{{.System.OS}}</span>
+            </div>
+            <div class="overview-kv">
+                <span class="overview-label">Architecture</span>
+                <span>{{.System.Arch}}</span>
+            </div>
+            <div class="overview-kv">
+                <span class="overview-label">CPUs</span>
+                <span>{{.System.CPUs}}</span>
+            </div>
+        </div>
+    </section>
+
+</div>
+{{end}}

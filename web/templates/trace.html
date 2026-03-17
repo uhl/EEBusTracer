@@ -1,0 +1,143 @@
+{{define "content"}}
+<div class="sidebar">
+    <button class="sidebar-toggle" id="sidebar-toggle"
+            title="Toggle sidebar">&laquo;</button>
+    <div class="sidebar-header">
+        <h2>Traces</h2>
+        <div class="sidebar-tabs">
+            <button class="sidebar-tab active" data-panel="trace-list">Traces</button>
+            <button class="sidebar-tab" data-panel="device-panel">Devices</button>
+            <button class="sidebar-tab" data-panel="bookmark-panel">Bookmarks</button>
+        </div>
+    </div>
+    <div class="sidebar-panel active" id="trace-list">
+        {{if .Traces}}
+        {{range .Traces}}
+        <a href="/traces/{{.ID}}" class="trace-item{{if eq .ID $.Trace.ID}} active{{end}}">
+            <div class="trace-name">{{.Name}}</div>
+            <div class="trace-meta">
+                <span>{{.MessageCount}} msgs</span>
+                <span>{{.StartedAt.Format "2006-01-02 15:04"}}</span>
+            </div>
+            <div class="trace-item-actions">
+                <button class="trace-action-btn" onclick="renameTrace(event, {{.ID}}, this)" title="Rename">&#9998;</button>
+                <button class="trace-action-btn trace-action-delete" onclick="sidebarDeleteTrace(event, {{.ID}})" title="Delete">&times;</button>
+            </div>
+        </a>
+        {{end}}
+        {{else}}
+        <div class="empty-state">No traces yet.</div>
+        {{end}}
+    </div>
+    <div class="sidebar-panel" id="device-panel">
+        <div class="empty-state">Loading devices...</div>
+    </div>
+    <div class="sidebar-panel" id="bookmark-panel">
+        <div class="bookmark-list" id="bookmark-list">
+            <div class="empty-state">No bookmarks yet</div>
+        </div>
+    </div>
+</div>
+<div class="main-area">
+    <div class="trace-header">
+        <h2>{{.Trace.Name}}</h2>
+        <div class="trace-menu">
+            <button class="trace-menu-btn" id="trace-menu-btn" title="Actions">&#8942;</button>
+            <div class="trace-menu-dropdown" id="trace-menu-dropdown">
+                <a href="/api/traces/{{.Trace.ID}}/export" class="trace-menu-item">Export</a>
+                <button class="trace-menu-item trace-menu-danger" onclick="deleteTrace({{.Trace.ID}})">Delete</button>
+            </div>
+        </div>
+        <nav class="trace-nav">
+            <a href="/traces/{{.Trace.ID}}" class="active">Messages</a>
+            <a href="/traces/{{.Trace.ID}}/charts">Charts</a>
+            <a href="/traces/{{.Trace.ID}}/intelligence">Insights</a>
+        </nav>
+    </div>
+    <div class="filter-bar" id="filter-bar">
+        <input type="text" class="filter-input" id="filter-search" placeholder="Search messages...">
+        <select class="filter-select" id="filter-cmd">
+            <option value="">All Classifiers</option>
+            <option value="read">read</option>
+            <option value="reply">reply</option>
+            <option value="write">write</option>
+            <option value="call">call</option>
+            <option value="notify">notify</option>
+        </select>
+        <button class="btn btn-sm" id="btn-clear-filter">Reset</button>
+        <div class="filter-preset-controls">
+            <select class="filter-select" id="preset-select">
+                <option value="">Load Preset...</option>
+            </select>
+            <button class="btn btn-sm" id="btn-save-preset">Save</button>
+        </div>
+    </div>
+    <div class="find-bar" id="find-bar" style="display:none;">
+        <input type="text" class="find-input" id="find-input" placeholder="Find in messages...">
+        <span class="find-count" id="find-count"></span>
+        <button class="find-btn" id="find-prev" title="Previous (Shift+Enter)">&#9650;</button>
+        <button class="find-btn" id="find-next" title="Next (Enter)">&#9660;</button>
+        <button class="find-btn" id="find-close" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="message-table-container">
+        <table class="message-table" id="message-table">
+            <thead>
+                <tr>
+                    <th class="col-bookmark"></th>
+                    <th class="col-timestamp">Timestamp</th>
+                    <th class="col-comm">Communication</th>
+                    <th class="col-classifier">Classifier</th>
+                    <th class="col-funcset">Function Set</th>
+                </tr>
+            </thead>
+            <tbody id="message-tbody">
+                {{range .Messages}}
+                <tr class="msg-row" data-id="{{.ID}}" onclick="showDetail({{.TraceID}}, {{.ID}})">
+                    <td class="col-bookmark" id="bm-{{.ID}}"></td>
+                    <td>{{.Timestamp.Format "15:04:05.000"}}</td>
+                    <td class="col-comm">{{.DeviceSource}} <span class="dir-arrow dir-{{.Direction}}">{{if eq .Direction "incoming"}}&#8592;{{else}}&#8594;{{end}}</span> {{.DeviceDest}}</td>
+                    <td>{{.CmdClassifier}}</td>
+                    <td>{{.FunctionSet}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+        <button class="auto-scroll-btn active" id="auto-scroll-btn"
+                title="Auto-scroll to latest">&#8595;</button>
+    </div>
+    <div class="resize-handle" id="resize-handle"></div>
+    <div class="detail-panel" id="detail-panel">
+        <div class="detail-tabs">
+            <button class="tab active" data-tab="overview">Overview</button>
+            <button class="tab" data-tab="decoded">Decoded JSON</button>
+            <button class="tab" data-tab="headers">Headers</button>
+            <button class="tab" data-tab="related">Related</button>
+        </div>
+        <div class="detail-actions" id="detail-actions" style="display:none;">
+            <button class="btn btn-sm" id="btn-bookmark-msg">Bookmark</button>
+        </div>
+        <div class="detail-content" id="detail-content">
+            <pre class="json-display">Select a message to view details</pre>
+        </div>
+    </div>
+</div>
+<div class="kbd-overlay" id="jump-dialog" style="display:none;">
+    <div class="kbd-dialog">
+        <div class="kbd-dialog-title">Jump to Message</div>
+        <input type="text" class="kbd-dialog-input" id="jump-input"
+               placeholder="Sequence number or message counter...">
+        <div class="kbd-dialog-hint">Enter to jump, Escape to cancel</div>
+    </div>
+</div>
+<div class="kbd-overlay" id="kbd-help" style="display:none;">
+    <div class="kbd-dialog kbd-dialog-help">
+        <div class="kbd-dialog-title">Keyboard Shortcuts</div>
+        <div id="kbd-help-content"></div>
+    </div>
+</div>
+<script>
+    window.TRACE_ID = {{.Trace.ID}};
+</script>
+{{end}}
+
+{{template "layout" .}}

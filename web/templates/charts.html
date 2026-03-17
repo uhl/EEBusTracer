@@ -1,0 +1,72 @@
+{{define "content"}}
+<div class="main-area">
+    <div class="trace-header">
+        <h2>{{.Trace.Name}}</h2>
+        <div class="trace-menu">
+            <button class="trace-menu-btn" id="trace-menu-btn" title="Actions">&#8942;</button>
+            <div class="trace-menu-dropdown" id="trace-menu-dropdown">
+                <a href="/api/traces/{{.Trace.ID}}/export" class="trace-menu-item">Export</a>
+                <button class="trace-menu-item trace-menu-danger" onclick="deleteTrace({{.Trace.ID}})">Delete</button>
+            </div>
+        </div>
+        <nav class="trace-nav">
+            <a href="/traces/{{.Trace.ID}}">Messages</a>
+            <a href="/traces/{{.Trace.ID}}/charts" class="active">Charts</a>
+            <a href="/traces/{{.Trace.ID}}/intelligence">Insights</a>
+        </nav>
+    </div>
+    <div class="viz-controls" id="chart-controls">
+        <select class="filter-select" id="chart-selector"></select>
+        <button class="btn btn-sm" id="chart-new-btn">New Chart</button>
+        <button class="btn btn-sm btn-danger" id="chart-delete-btn" style="display:none">Delete Chart</button>
+        <div class="chart-series-toggles" id="chart-series-toggles"></div>
+        <label class="viz-toggle">
+            <input type="checkbox" id="chart-overlay"> Overlay
+        </label>
+        <button class="btn btn-sm" id="chart-reset">Reset Zoom</button>
+        <button class="btn btn-sm" id="chart-export-csv">Export CSV</button>
+    </div>
+    <div class="viz-canvas" id="chart-canvas">
+        <canvas id="chart-main"></canvas>
+    </div>
+
+    <!-- Chart Builder Dialog -->
+    <div class="chart-builder-overlay" id="chart-builder-overlay" style="display:none">
+        <div class="chart-builder-dialog">
+            <h3>New Chart</h3>
+            <div class="chart-builder-field">
+                <label>Name</label>
+                <input type="text" id="builder-name" class="chart-builder-input" placeholder="My Chart">
+            </div>
+            <div class="chart-builder-field">
+                <label>Chart Type</label>
+                <div class="chart-builder-toggle">
+                    <button class="btn btn-sm builder-type-btn active" data-type="line">Line</button>
+                    <button class="btn btn-sm builder-type-btn" data-type="step">Step</button>
+                </div>
+            </div>
+            <div class="chart-builder-field">
+                <label>Data Sources</label>
+                <div id="builder-sources" class="chart-builder-sources">
+                    <div class="empty-state">Scanning trace...</div>
+                </div>
+            </div>
+            <div class="chart-builder-actions">
+                <button class="btn btn-sm" id="builder-cancel">Cancel</button>
+                <button class="btn btn-sm btn-start" id="builder-save">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+    window.TRACE_ID = {{.Trace.ID}};
+</script>
+<script src="/static/js/vendor/hammer.min.js"></script>
+<script src="/static/js/vendor/chart.umd.min.js"></script>
+<script src="/static/js/vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="/static/js/vendor/chartjs-plugin-zoom.min.js"></script>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/charts.js"></script>
+{{end}}
+
+{{template "layout" .}}

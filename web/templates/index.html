@@ -1,0 +1,44 @@
+{{define "content"}}
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h2>Traces</h2>
+        <button id="btn-new-trace" class="btn btn-sm">+ New</button>
+    </div>
+    <div class="trace-list" id="trace-list">
+        {{if .Traces}}
+        {{range .Traces}}
+        <a href="/traces/{{.ID}}" class="trace-item">
+            <div class="trace-name">{{.Name}}</div>
+            <div class="trace-meta">
+                <span>{{.MessageCount}} msgs</span>
+                <span>{{.StartedAt.Format "2006-01-02 15:04"}}</span>
+            </div>
+            <div class="trace-item-actions">
+                <button class="trace-action-btn" onclick="renameTrace(event, {{.ID}}, this)" title="Rename">&#9998;</button>
+                <button class="trace-action-btn trace-action-delete" onclick="sidebarDeleteTrace(event, {{.ID}})" title="Delete">&times;</button>
+            </div>
+        </a>
+        {{end}}
+        {{else}}
+        <div class="empty-state">No traces yet. Start a capture or import a file.</div>
+        {{end}}
+    </div>
+    <div class="sidebar-footer">
+        <form id="import-form" enctype="multipart/form-data">
+            <input type="file" id="import-file" accept=".eet,.eebt,.log" hidden>
+            <button type="button" id="btn-import" class="btn btn-sm btn-full">Import .eet / .log</button>
+        </form>
+    </div>
+</div>
+<div class="main-area">
+    <div class="welcome">
+        <h1>EEBus Tracer</h1>
+        <p>Select a trace from the sidebar to view messages, or start a new capture.</p>
+        <p class="drop-hint">Drop .eet or .log files anywhere to import</p>
+        <input type="file" id="drop-zone-file" accept=".eet,.eebt,.log" hidden>
+        <button type="button" id="btn-load-file" class="btn drop-zone-btn">Load from file</button>
+    </div>
+</div>
+{{end}}
+
+{{template "layout" .}}

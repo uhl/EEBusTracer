@@ -1,0 +1,42 @@
+{{define "content"}}
+<div class="main-area">
+    <div class="trace-header">
+        <h2>{{.Trace.Name}}</h2>
+        <div class="trace-menu">
+            <button class="trace-menu-btn" id="trace-menu-btn" title="Actions">&#8942;</button>
+            <div class="trace-menu-dropdown" id="trace-menu-dropdown">
+                <a href="/api/traces/{{.Trace.ID}}/export" class="trace-menu-item">Export</a>
+                <button class="trace-menu-item trace-menu-danger" onclick="deleteTrace({{.Trace.ID}})">Delete</button>
+            </div>
+        </div>
+        <nav class="trace-nav">
+            <a href="/traces/{{.Trace.ID}}">Messages</a>
+            <a href="/traces/{{.Trace.ID}}/charts">Charts</a>
+            <a href="/traces/{{.Trace.ID}}/intelligence" class="active">Insights</a>
+        </nav>
+    </div>
+    <div class="intel-tabs">
+        <button class="intel-tab active" data-tab="usecases">Use Cases</button>
+        <button class="intel-tab" data-tab="subscriptions">Subscriptions</button>
+        <button class="intel-tab" data-tab="metrics">Heartbeat Accuracy</button>
+    </div>
+    <div class="intel-content" id="intel-content">
+        <div class="intel-panel active" id="panel-usecases">
+            <div class="empty-state" id="usecases-loading">Loading use cases...</div>
+        </div>
+        <div class="intel-panel" id="panel-subscriptions">
+            <div class="empty-state" id="subscriptions-loading">Loading subscriptions...</div>
+        </div>
+        <div class="intel-panel" id="panel-metrics">
+            <div id="metrics-summary" class="empty-state">Loading heartbeat metrics...</div>
+        </div>
+    </div>
+</div>
+<script>
+    window.TRACE_ID = {{.Trace.ID}};
+</script>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/intelligence.js"></script>
+{{end}}
+
+{{template "layout" .}}
