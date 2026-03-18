@@ -1,5 +1,5 @@
 # Binaries
-eebustracer
+/eebustracer
 *.exe
 *.exe~
 *.dll
