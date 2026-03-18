@@ -5,8 +5,6 @@ import (
 	"fmt"
 )
 
-const currentSchemaVersion = 4
-
 func migrate(db *sql.DB) error {
 	// Create schema_version table if it doesn't exist
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (
@@ -91,7 +89,7 @@ func migrateV4(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt); err != nil {
@@ -127,7 +125,7 @@ func migrateV3(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt); err != nil {
@@ -204,7 +202,7 @@ func migrateV1(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt); err != nil {
@@ -273,7 +271,7 @@ func migrateV2(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	for _, stmt := range stmts {
 		if _, err := tx.Exec(stmt); err != nil {

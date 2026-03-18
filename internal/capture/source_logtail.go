@@ -71,7 +71,7 @@ func (s *LogTailSource) Run(ctx context.Context, emit func(*model.Message)) erro
 func (s *LogTailSource) readNewLines(reader *bufio.Reader, partial *string, baseDate time.Time, emit func(*model.Message)) {
 	for {
 		line, err := reader.ReadString('\n')
-		if len(line) > 0 {
+		if line != "" {
 			*partial += line
 			// If we got a full line (ends with \n), process it.
 			if line[len(line)-1] == '\n' {
@@ -173,7 +173,7 @@ func (s *LogTailSource) processLine(line string, baseDate time.Time, emit func(*
 
 // trimRight removes trailing whitespace from a string.
 func trimRight(s string) string {
-	for len(s) > 0 {
+	for s != "" {
 		c := s[len(s)-1]
 		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
 			s = s[:len(s)-1]

@@ -22,7 +22,7 @@ type TemplateRenderer struct {
 // Each page template is parsed separately with the layout and partials so that
 // multiple pages can define the same block name (e.g. "content") without
 // colliding.
-func NewTemplateRenderer(templatesFS fs.FS, staticFS fs.FS) (*TemplateRenderer, error) {
+func NewTemplateRenderer(templatesFS, staticFS fs.FS) (*TemplateRenderer, error) {
 	// Collect shared templates (layout + partials)
 	shared := []string{"layout.html", "partials/*.html"}
 

@@ -236,11 +236,12 @@ func (s *Server) handleChartData(w http.ResponseWriter, r *http.Request) {
 		// Build labels
 		labels := make(map[string]SeriesLabel)
 		if descCtx != nil {
-			if src.FunctionSet == "MeasurementListData" {
+			switch src.FunctionSet {
+			case "MeasurementListData":
 				for id, m := range descCtx.Measurements {
 					labels[id] = SeriesLabel{Label: m.Label, Unit: m.Unit}
 				}
-			} else if src.FunctionSet == "LoadControlLimitListData" {
+			case "LoadControlLimitListData":
 				for id, l := range descCtx.Limits {
 					labels[id] = SeriesLabel{Label: l.Label, Unit: l.Unit}
 				}

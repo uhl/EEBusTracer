@@ -52,7 +52,7 @@ func (r *MessageRepo) InsertMessages(msgs []*model.Message) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
 	stmt, err := tx.Prepare(
 		`INSERT INTO messages (trace_id, sequence_num, timestamp, direction, source_addr, dest_addr,

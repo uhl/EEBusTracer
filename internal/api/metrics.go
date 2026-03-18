@@ -49,7 +49,7 @@ func (s *Server) handleMetricsExport(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv")
 		w.Header().Set("Content-Disposition", "attachment; filename=heartbeat-metrics.csv")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(analysis.FormatHeartbeatCSV(metrics.HeartbeatJitter)))
+		_, _ = w.Write([]byte(analysis.FormatHeartbeatCSV(metrics.HeartbeatJitter)))
 	default:
 		writeJSON(w, http.StatusOK, metrics)
 	}

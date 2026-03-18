@@ -12,7 +12,7 @@ func TestOpen_Memory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(:memory:) failed: %v", err)
 	}
-	defer db.Close()
+	db.Close()
 }
 
 func TestMigrate(t *testing.T) {

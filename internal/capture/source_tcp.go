@@ -88,7 +88,6 @@ func (s *TCPSource) Run(ctx context.Context, emit func(*model.Message)) error {
 		n, readErr := conn.Read(buf)
 		if n > 0 {
 			data := carry + string(buf[:n])
-			carry = ""
 
 			s.logger.Debug("tcp: chunk received",
 				"bytes", n,

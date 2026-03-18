@@ -140,7 +140,7 @@ func introspectPayload(spinePayload json.RawMessage, functionSet string, msgCoun
 }
 
 // findIDFieldAndSamples looks for a field ending in "Id" or "id" in the data array items.
-func findIDFieldAndSamples(dataArray []map[string]json.RawMessage) (string, []string) {
+func findIDFieldAndSamples(dataArray []map[string]json.RawMessage) (idField string, sampleIDs []string) {
 	// Check each field name for an ID-like pattern
 	for key := range dataArray[0] {
 		if !isIDField(key) {

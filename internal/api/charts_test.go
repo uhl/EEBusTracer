@@ -115,7 +115,7 @@ func TestAPI_Charts_CRUD(t *testing.T) {
 	}
 
 	// Delete
-	req, _ = http.NewRequest("DELETE", ts.URL+"/api/charts/"+itoa(created.ID), nil)
+	req, _ = http.NewRequest("DELETE", ts.URL+"/api/charts/"+itoa(created.ID), http.NoBody)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("DELETE chart failed: %v", err)
@@ -150,7 +150,7 @@ func TestAPI_Charts_CannotDeleteBuiltIn(t *testing.T) {
 		t.Fatal("no charts found")
 	}
 
-	req, _ := http.NewRequest("DELETE", ts.URL+"/api/charts/"+itoa(charts[0].ID), nil)
+	req, _ := http.NewRequest("DELETE", ts.URL+"/api/charts/"+itoa(charts[0].ID), http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("DELETE failed: %v", err)

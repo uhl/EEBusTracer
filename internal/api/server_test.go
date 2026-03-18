@@ -91,7 +91,7 @@ func TestAPI_TracesCRUD(t *testing.T) {
 	resp.Body.Close()
 
 	// Delete
-	req, _ := http.NewRequest("DELETE", ts.URL+"/api/traces/1", nil)
+	req, _ := http.NewRequest("DELETE", ts.URL+"/api/traces/1", http.NoBody)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /api/traces/1 failed: %v", err)
@@ -316,7 +316,7 @@ func TestAPI_Presets(t *testing.T) {
 	}
 
 	// Delete
-	req, _ := http.NewRequest("DELETE", ts.URL+"/api/presets/1", nil)
+	req, _ := http.NewRequest("DELETE", ts.URL+"/api/presets/1", http.NoBody)
 	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != 204 {
 		t.Errorf("DELETE /api/presets/1 status = %d, want 204", resp.StatusCode)
@@ -376,7 +376,7 @@ func TestAPI_Bookmarks(t *testing.T) {
 	}
 
 	// Delete
-	req, _ := http.NewRequest("DELETE", ts.URL+"/api/bookmarks/1", nil)
+	req, _ := http.NewRequest("DELETE", ts.URL+"/api/bookmarks/1", http.NoBody)
 	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != 204 {
 		t.Errorf("DELETE bookmark status = %d, want 204", resp.StatusCode)

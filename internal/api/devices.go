@@ -201,7 +201,6 @@ func parseDiscoveryEntities(spinePayload json.RawMessage) []EntityInfoResult {
 			if fi.Description == nil || fi.Description.FeatureAddress == nil {
 				continue
 			}
-			entityAddr := string(fi.Description.FeatureAddress.Entity)
 			feature := FeatureInfoResult{}
 			if fi.Description.FeatureAddress.Feature != nil {
 				feature.Address = json.Number(json.Number(string(rune('0' + *fi.Description.FeatureAddress.Feature)))).String()
@@ -218,7 +217,7 @@ func parseDiscoveryEntities(spinePayload json.RawMessage) []EntityInfoResult {
 				}
 			}
 
-			if e, ok := entityMap[entityAddr]; ok {
+			if e, ok := entityMap[string(fi.Description.FeatureAddress.Entity)]; ok {
 				e.Features = append(e.Features, feature)
 			}
 		}
