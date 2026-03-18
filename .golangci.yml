@@ -26,8 +26,10 @@ linters:
       disabled-checks:
         - ifElseChain
         - hugeParam
-
-issues:
-  exclude-use-default: true
-  max-issues-per-linter: 50
-  max-same-issues: 5
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+    max-issues-per-linter: 50
+    max-same-issues: 5
