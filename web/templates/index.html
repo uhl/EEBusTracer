@@ -1,5 +1,5 @@
 {{define "content"}}
-<div class="sidebar">
+<div class="sidebar reveal">
     <div class="sidebar-header">
         <h2>Traces</h2>
         <button id="btn-new-trace" class="btn btn-sm">+ New</button>
@@ -26,17 +26,17 @@
     <div class="sidebar-footer">
         <form id="import-form" enctype="multipart/form-data">
             <input type="file" id="import-file" accept=".eet,.eebt,.log" hidden>
-            <button type="button" id="btn-import" class="btn btn-sm btn-full">Import .eet / .log</button>
+            <button type="button" id="btn-import" class="btn btn-sm btn-full" title="Import a trace file (.eet or .log)">Import .eet / .log</button>
         </form>
     </div>
 </div>
 <div class="main-area">
-    <div class="welcome">
-        <h1>EEBus Tracer</h1>
-        <p>Select a trace from the sidebar to view messages, or start a new capture.</p>
+    <div class="welcome reveal">
+        <h1 class="welcome-title reveal">EEBus<br>Tracer</h1>
+        <p class="welcome-subtitle reveal reveal-d1">Select a trace from the sidebar to view messages, or start a new capture.</p>
         <p class="drop-hint">Drop .eet or .log files anywhere to import</p>
         <input type="file" id="drop-zone-file" accept=".eet,.eebt,.log" hidden>
-        <button type="button" id="btn-load-file" class="btn drop-zone-btn">Load from file</button>
+        <button type="button" id="btn-load-file" class="btn btn-accent drop-zone-btn reveal reveal-d2">Load from file</button>
     </div>
 </div>
 {{end}}

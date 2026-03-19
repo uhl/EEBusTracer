@@ -9,6 +9,12 @@
     let currentMsg = null;
     let descriptionCache = {};
     let autoScroll = true;
+    var orphanedIds = new Set();
+    var useCaseContextMap = {};
+
+    var PAGE_SIZE = 2000;
+    var currentOffset = 0;
+    var lastTotalCount = typeof window.TOTAL_MESSAGES !== 'undefined' ? window.TOTAL_MESSAGES : 0;
 
     // --- Capture Mode Selector ---
     const captureMode = document.getElementById('capture-mode');
@@ -201,6 +207,10 @@
                     btnStop.disabled = true;
                     statusEl.textContent = 'Idle';
                     if (ws) { ws.close(); ws = null; }
+                    // Re-compact capture controls on trace pages
+                    if (typeof window.TRACE_ID !== 'undefined') {
+                        setCaptureCompact(true);
+                    }
                 }
             } catch (e) {
                 alert('Stop failed: ' + e.message);
@@ -252,6 +262,25 @@
         ws.onclose = function() { ws = null; };
     }
 
+    // --- Compact capture controls on trace pages ---
+    var captureControlsEl = document.querySelector('.capture-controls');
+    var captureExpandBtn = document.getElementById('capture-expand-btn');
+
+    function setCaptureCompact(compact) {
+        if (!captureControlsEl) return;
+        if (compact) {
+            captureControlsEl.classList.add('capture-compact');
+        } else {
+            captureControlsEl.classList.remove('capture-compact');
+        }
+    }
+
+    if (captureExpandBtn) {
+        captureExpandBtn.addEventListener('click', function() {
+            setCaptureCompact(false);
+        });
+    }
+
     // Auto-connect if on a trace page and capturing
     if (typeof window.TRACE_ID !== 'undefined') {
         fetch('/api/capture/status')
@@ -259,6 +288,7 @@
             .then(data => {
                 if (data.capturing && data.traceId === window.TRACE_ID) {
                     connectWebSocket(window.TRACE_ID);
+                    setCaptureCompact(false);
                     // Reflect source type in mode selector
                     if (captureMode && data.sourceType) {
                         if (data.sourceType === 'logtail') {
@@ -270,13 +300,40 @@
                         }
                         captureMode.dispatchEvent(new Event('change'));
                     }
+                } else {
+                    // Not capturing on this trace — collapse controls
+                    setCaptureCompact(true);
                 }
+            })
+            .catch(function() {
+                setCaptureCompact(true);
             });
 
         // Load sidebar data
         loadBookmarks();
         loadDevicePanel();
         loadPresets();
+
+        // Load orphaned request IDs
+        fetch('/api/traces/' + window.TRACE_ID + '/orphaned-requests')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                orphanedIds = new Set(data.ids || []);
+                // Mark existing rows
+                document.querySelectorAll('.msg-row').forEach(function(row) {
+                    var id = parseInt(row.dataset.id);
+                    if (orphanedIds.has(id)) row.classList.add('msg-orphan');
+                });
+            })
+            .catch(function() {});
+
+        // Load use case context
+        fetch('/api/traces/' + window.TRACE_ID + '/usecase-context')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                populateUseCaseDropdown(data);
+            })
+            .catch(function() {});
 
     }
 
@@ -286,7 +343,7 @@
         if (!tbody) return;
 
         const tr = document.createElement('tr');
-        tr.className = 'msg-row';
+        tr.className = 'msg-row' + (orphanedIds.has(msg.id) ? ' msg-orphan' : '');
         tr.dataset.id = msg.id;
         tr.onclick = function() { showDetail(msg.traceId, msg.id); };
 
@@ -294,14 +351,20 @@
         const timeStr = ts.toTimeString().substring(0, 8) + '.' + String(ts.getMilliseconds()).padStart(3, '0');
 
         var arrow = msg.direction === 'incoming' ? '\u2190' : '\u2192';
+        var cls = msg.cmdClassifier || '';
         tr.innerHTML =
             '<td class="col-bookmark" id="bm-' + msg.id + '"></td>' +
+            '<td class="col-seq">' + (msg.sequenceNum || '') + '</td>' +
             '<td>' + timeStr + '</td>' +
             '<td class="col-comm">' + (msg.deviceSource || '') + ' <span class="dir-arrow dir-' + msg.direction + '">' + arrow + '</span> ' + (msg.deviceDest || '') + '</td>' +
-            '<td>' + (msg.cmdClassifier || '') + '</td>' +
+            '<td class="cmd-' + cls + '">' + cls + '</td>' +
             '<td>' + (msg.functionSet || msg.shipMsgType || '') + '</td>';
 
         tbody.appendChild(tr);
+
+        // Animate new row entrance
+        tr.classList.add('msg-row-enter');
+        setTimeout(function() { tr.classList.remove('msg-row-enter'); }, 400);
 
         if (autoScroll) {
             const container = tbody.closest('.message-table-container');
@@ -320,6 +383,20 @@
         const row = document.querySelector('.msg-row[data-id="' + msgId + '"]');
         if (row) row.classList.add('selected');
         selectedMsgId = msgId;
+
+        // Clear previous correlation highlights
+        document.querySelectorAll('.msg-row.msg-correlated').forEach(r => r.classList.remove('msg-correlated'));
+
+        // Fetch related and highlight correlated rows
+        fetch('/api/traces/' + traceId + '/messages/' + msgId + '/related')
+            .then(function(r) { return r.json(); })
+            .then(function(related) {
+                for (var i = 0; i < related.length; i++) {
+                    var relRow = document.querySelector('.msg-row[data-id="' + related[i].message.id + '"]');
+                    if (relRow && relRow !== row) relRow.classList.add('msg-correlated');
+                }
+            })
+            .catch(function() {});
 
         try {
             const resp = await fetch('/api/traces/' + traceId + '/messages/' + msgId);
@@ -519,9 +596,10 @@ function categoryAbbr(cat) {
     async function renderOverviewTab(msg, container) {
         var shipType = msg.shipMsgType || '';
         var fs = msg.functionSet || '';
+        var orphanWarning = orphanedIds.has(msg.id) ? '<div class="overview-warning">No response received for this request</div>' : '';
 
         if (shipType && shipType !== 'data') {
-            container.innerHTML = renderShipOverview(msg);
+            container.innerHTML = orphanWarning + renderShipOverview(msg);
             return;
         }
 
@@ -532,7 +610,7 @@ function categoryAbbr(cat) {
         var cmds = extractCmdsJS(payload);
 
         if (hasResultData(cmds)) {
-            container.innerHTML = overviewHeader(msg) + renderResultOverview(cmds, msg);
+            container.innerHTML = orphanWarning + overviewHeader(msg) + renderResultOverview(cmds, msg);
             return;
         }
 
@@ -550,7 +628,7 @@ function categoryAbbr(cat) {
         }
 
         var body = entry ? entry.render(cmds, descs) : '';
-        container.innerHTML = overviewHeader(msg) + (body || '');
+        container.innerHTML = orphanWarning + overviewHeader(msg) + (body || '');
     }
 
     function shipTypeBadge(type) {
@@ -1091,21 +1169,69 @@ function categoryAbbr(cat) {
     async function loadRelatedMessages(traceId, msgId, container) {
         container.innerHTML = '<div class="empty-state">Loading...</div>';
         try {
-            const resp = await fetch('/api/traces/' + traceId + '/messages/' + msgId + '/related');
-            const related = await resp.json();
-            if (related.length === 0) {
+            var results = await Promise.all([
+                fetch('/api/traces/' + traceId + '/messages/' + msgId + '/related').then(function(r) { return r.json(); }),
+                fetch('/api/traces/' + traceId + '/messages/' + msgId + '/conversation?limit=30').then(function(r) { return r.json(); })
+            ]);
+            var related = results[0];
+            var conv = results[1];
+
+            if (related.length === 0 && conv.total === 0) {
                 container.innerHTML = '<div class="empty-state">No related messages found</div>';
                 return;
             }
-            let html = '<ul class="related-list">';
-            for (const r of related) {
-                const m = r.message;
-                html += '<li class="related-item" onclick="showDetail(' + m.traceId + ',' + m.id + ')">' +
-                    '<span>#' + m.sequenceNum + ' ' + (m.cmdClassifier || '') + ' ' + (m.functionSet || '') + '</span>' +
-                    '<span class="related-type">' + r.relationship + '</span>' +
-                    '</li>';
+
+            var html = '';
+
+            // Section 1: Direct Correlation
+            if (related.length > 0) {
+                html += '<div class="related-section">';
+                html += '<div class="related-section-header">Direct Correlation <span class="count-badge">' + related.length + '</span></div>';
+                html += '<ul class="related-list">';
+                for (var i = 0; i < related.length; i++) {
+                    var r = related[i];
+                    var m = r.message;
+                    html += '<li class="related-item" onclick="showDetail(' + m.traceId + ',' + m.id + ')">';
+                    html += '<span>#' + m.sequenceNum + ' ' + (m.cmdClassifier || '') + ' ' + (m.functionSet || '') + '</span>';
+                    html += '<span class="related-meta">';
+                    html += '<span class="related-type">' + r.relationship + '</span>';
+                    if (r.latencyMs != null) {
+                        var latStr = r.latencyMs < 1 ? r.latencyMs.toFixed(2) : r.latencyMs < 100 ? r.latencyMs.toFixed(1) : Math.round(r.latencyMs);
+                        html += '<span class="related-latency">' + latStr + ' ms</span>';
+                    }
+                    if (r.resultStatus) {
+                        html += '<span class="related-result ' + r.resultStatus + '">' + r.resultStatus + '</span>';
+                    }
+                    html += '</span>';
+                    html += '</li>';
+                }
+                html += '</ul></div>';
             }
-            html += '</ul>';
+
+            // Section 2: Conversation
+            if (conv.total > 0) {
+                html += '<div class="related-section">';
+                html += '<div class="related-section-header">Conversation <span class="count-badge">' + conv.total + '</span></div>';
+                html += '<ul class="related-list">';
+                for (var j = 0; j < conv.messages.length; j++) {
+                    var cm = conv.messages[j];
+                    var isCurrent = cm.id === msgId;
+                    var ts = new Date(cm.timestamp);
+                    var timeStr = ts.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', fractionalSecondDigits: 3});
+                    html += '<li class="conversation-item' + (isCurrent ? ' conversation-current' : '') + '" onclick="showDetail(' + cm.traceId + ',' + cm.id + ')">';
+                    html += '<span class="conv-time">' + timeStr + '</span>';
+                    html += '<span class="conv-direction">' + (cm.deviceSource || '?') + ' &rarr; ' + (cm.deviceDest || '?') + '</span>';
+                    html += '<span class="overview-badge-cmd overview-badge-' + (cm.cmdClassifier || 'unknown') + '">' + (cm.cmdClassifier || '') + '</span>';
+                    html += '<span>#' + cm.sequenceNum + '</span>';
+                    html += '</li>';
+                }
+                html += '</ul>';
+                if (conv.messages.length < conv.total) {
+                    html += '<div class="conversation-more">Showing ' + conv.messages.length + ' of ' + conv.total + '</div>';
+                }
+                html += '</div>';
+            }
+
             container.innerHTML = html;
         } catch (e) {
             container.innerHTML = '<div class="empty-state">Failed to load related messages</div>';
@@ -1246,7 +1372,7 @@ function categoryAbbr(cat) {
         var el = document.getElementById(id);
         if (el) el.addEventListener('input', debouncedApplyFilter);
     });
-    ['filter-cmd'].forEach(function(id) {
+    ['filter-cmd', 'filter-usecase'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) el.addEventListener('change', function() { applyFilter(); });
     });
@@ -1255,13 +1381,40 @@ function categoryAbbr(cat) {
         btnClearFilter.addEventListener('click', clearFilter);
     }
 
+    function populateUseCaseDropdown(data) {
+        var select = document.getElementById('filter-usecase');
+        if (!select) return;
+        // Clear existing options except the first
+        while (select.options.length > 1) select.remove(1);
+        useCaseContextMap = {};
+        for (var i = 0; i < data.length; i++) {
+            var uc = data[i];
+            useCaseContextMap[uc.abbreviation] = uc;
+            var opt = document.createElement('option');
+            opt.value = uc.abbreviation;
+            opt.textContent = uc.abbreviation + ' \u2014 ' + uc.devices.length + ' device' + (uc.devices.length !== 1 ? 's' : '');
+            select.appendChild(opt);
+        }
+    }
+
     function buildFilterParams() {
         const params = new URLSearchParams();
         const search = document.getElementById('filter-search');
         const cmd = document.getElementById('filter-cmd');
+        const ucSelect = document.getElementById('filter-usecase');
 
         if (search && search.value.trim()) params.set('search', search.value.trim());
         if (cmd && cmd.value) params.set('cmdClassifier', cmd.value);
+
+        if (ucSelect && ucSelect.value) {
+            var uc = useCaseContextMap[ucSelect.value];
+            if (uc) {
+                params.set('functionSet', uc.functionSets.join(','));
+                if (uc.devices.length === 1) {
+                    params.set('device', uc.devices[0]);
+                }
+            }
+        }
         return params;
     }
 
@@ -1269,11 +1422,14 @@ function categoryAbbr(cat) {
         var ts = new Date(msg.timestamp);
         var timeStr = ts.toTimeString().substring(0, 8) + '.' + String(ts.getMilliseconds()).padStart(3, '0');
         var arrow = msg.direction === 'incoming' ? '\u2190' : '\u2192';
-        return '<tr class="msg-row" data-id="' + msg.id + '" onclick="showDetail(' + msg.traceId + ',' + msg.id + ')">' +
+        var cls = msg.cmdClassifier || '';
+        var rowClass = 'msg-row' + (orphanedIds.has(msg.id) ? ' msg-orphan' : '');
+        return '<tr class="' + rowClass + '" data-id="' + msg.id + '" onclick="showDetail(' + msg.traceId + ',' + msg.id + ')">' +
             '<td class="col-bookmark" id="bm-' + msg.id + '"></td>' +
+            '<td class="col-seq">' + (msg.sequenceNum || '') + '</td>' +
             '<td>' + timeStr + '</td>' +
             '<td class="col-comm">' + (msg.deviceSource || '') + ' <span class="dir-arrow dir-' + msg.direction + '">' + arrow + '</span> ' + (msg.deviceDest || '') + '</td>' +
-            '<td>' + (msg.cmdClassifier || '') + '</td>' +
+            '<td class="cmd-' + cls + '">' + cls + '</td>' +
             '<td>' + (msg.functionSet || msg.shipMsgType || '') + '</td>' +
             '</tr>';
     }
@@ -1281,11 +1437,16 @@ function categoryAbbr(cat) {
     async function applyFilter() {
         if (typeof window.TRACE_ID === 'undefined') return;
 
+        currentOffset = 0;
         const params = buildFilterParams();
-        params.set('limit', '100000');
+        params.set('limit', String(PAGE_SIZE));
+        params.set('offset', '0');
         try {
             const resp = await fetch('/api/traces/' + window.TRACE_ID + '/messages?' + params.toString());
             const messages = await resp.json();
+            var totalCount = parseInt(resp.headers.get('X-Total-Count')) || 0;
+            var unfilteredCount = parseInt(resp.headers.get('X-Unfiltered-Count')) || totalCount;
+            lastTotalCount = totalCount;
             const tbody = document.getElementById('message-tbody');
             if (tbody) {
                 var html = '';
@@ -1294,6 +1455,9 @@ function categoryAbbr(cat) {
                 }
                 tbody.innerHTML = html;
             }
+            currentOffset = messages.length;
+            updateFilterIndicator(totalCount, unfilteredCount);
+            updateLoadMoreButton(messages.length, totalCount);
             updateStatusBar();
         } catch (e) {
             console.error('Filter failed:', e);
@@ -1306,17 +1470,113 @@ function categoryAbbr(cat) {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
-        const selects = ['filter-cmd'];
+        const selects = ['filter-cmd', 'filter-usecase'];
         selects.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
+        currentOffset = 0;
+        var toolbar = document.getElementById('toolbar');
+        if (toolbar) toolbar.classList.remove('filter-active');
         applyFilter();
     }
 
-    // --- Filter Presets ---
+    // --- Filter Active Indicator ---
+    // filteredTotal: count of messages matching the current filter
+    // unfilteredTotal: count of all messages in the trace (no filter)
+    function updateFilterIndicator(filteredTotal, unfilteredTotal) {
+        var toolbar = document.getElementById('toolbar');
+        var statusMsgs = document.getElementById('status-messages');
+
+        if (filteredTotal < unfilteredTotal) {
+            if (toolbar) toolbar.classList.add('filter-active');
+            if (statusMsgs) {
+                statusMsgs.textContent = 'Showing ' + filteredTotal + ' of ' + unfilteredTotal + ' messages';
+                statusMsgs.classList.add('status-filtered');
+            }
+        } else {
+            if (toolbar) toolbar.classList.remove('filter-active');
+            if (statusMsgs) {
+                statusMsgs.classList.remove('status-filtered');
+            }
+        }
+    }
+
+    // --- Load More Button ---
+    function updateLoadMoreButton(displayed, total) {
+        var btn = document.getElementById('load-more-btn');
+        if (!btn) return;
+        var remaining = total - displayed;
+        if (remaining > 0) {
+            btn.style.display = '';
+            btn.textContent = 'Load more (' + remaining + ' remaining)';
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+
+    (function() {
+        var btn = document.getElementById('load-more-btn');
+        if (!btn) return;
+        btn.addEventListener('click', async function() {
+            if (typeof window.TRACE_ID === 'undefined') return;
+            var params = buildFilterParams();
+            params.set('limit', String(PAGE_SIZE));
+            params.set('offset', String(currentOffset));
+            try {
+                var resp = await fetch('/api/traces/' + window.TRACE_ID + '/messages?' + params.toString());
+                var messages = await resp.json();
+                var totalCount = parseInt(resp.headers.get('X-Total-Count')) || lastTotalCount;
+                lastTotalCount = totalCount;
+                var tbody = document.getElementById('message-tbody');
+                if (tbody && messages.length > 0) {
+                    var html = '';
+                    for (var i = 0; i < messages.length; i++) {
+                        html += buildRowHTML(messages[i]);
+                    }
+                    tbody.insertAdjacentHTML('beforeend', html);
+                }
+                currentOffset += messages.length;
+                updateLoadMoreButton(currentOffset, totalCount);
+                updateStatusBar();
+            } catch (e) {
+                console.error('Load more failed:', e);
+            }
+        });
+    })();
+
+    // Initial load-more button state for server-rendered pages
+    (function() {
+        if (typeof window.TRACE_ID === 'undefined') return;
+        var tbody = document.getElementById('message-tbody');
+        var total = typeof window.TOTAL_MESSAGES !== 'undefined' ? window.TOTAL_MESSAGES : 0;
+        if (tbody && total > 0) {
+            var displayed = tbody.children.length;
+            currentOffset = displayed;
+            updateLoadMoreButton(displayed, total);
+        }
+    })();
+
+    // --- Filter Presets (gear-icon dropdown) ---
+    const btnPresets = document.getElementById('btn-presets');
+    const presetsDropdown = document.getElementById('presets-dropdown');
+    const presetList = document.getElementById('preset-list');
     const btnSavePreset = document.getElementById('btn-save-preset');
-    const presetSelect = document.getElementById('preset-select');
+
+    if (btnPresets && presetsDropdown) {
+        btnPresets.addEventListener('click', function(e) {
+            e.stopPropagation();
+            presetsDropdown.classList.toggle('open');
+        });
+
+        document.addEventListener('click', function() {
+            presetsDropdown.classList.remove('open');
+        });
+
+        presetsDropdown.addEventListener('click', function(e) {
+            e.stopPropagation();
+        });
+    }
 
     if (btnSavePreset) {
         btnSavePreset.addEventListener('click', async () => {
@@ -1338,44 +1598,55 @@ function categoryAbbr(cat) {
             } catch (e) {
                 alert('Save preset failed: ' + e.message);
             }
-        });
-    }
-
-    if (presetSelect) {
-        presetSelect.addEventListener('change', async () => {
-            const id = presetSelect.value;
-            if (!id) return;
-
-            // Find the preset from loaded data
-            const option = presetSelect.querySelector('option[value="' + id + '"]');
-            if (!option || !option.dataset.filter) return;
-
-            try {
-                const filter = JSON.parse(option.dataset.filter);
-                // Apply filter values to inputs
-                if (filter.search) document.getElementById('filter-search').value = filter.search;
-                if (filter.cmdClassifier) document.getElementById('filter-cmd').value = filter.cmdClassifier;
-                applyFilter();
-            } catch (e) {
-                console.error('Apply preset failed:', e);
-            }
-            presetSelect.value = '';
+            if (presetsDropdown) presetsDropdown.classList.remove('open');
         });
     }
 
     async function loadPresets() {
-        if (!presetSelect) return;
+        if (!presetList) return;
         try {
             const resp = await fetch('/api/presets');
             const presets = await resp.json();
-            // Keep the first "Load Preset..." option
-            while (presetSelect.options.length > 1) presetSelect.remove(1);
+            presetList.innerHTML = '';
             presets.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.id;
-                opt.textContent = p.name;
-                opt.dataset.filter = p.filter;
-                presetSelect.appendChild(opt);
+                const row = document.createElement('div');
+                row.className = 'toolbar-presets-row';
+
+                const btn = document.createElement('button');
+                btn.className = 'toolbar-presets-item';
+                btn.textContent = p.name;
+                btn.dataset.filter = p.filter;
+                btn.addEventListener('click', function() {
+                    try {
+                        const filter = JSON.parse(p.filter);
+                        var searchEl = document.getElementById('filter-search');
+                        var cmdEl = document.getElementById('filter-cmd');
+                        if (searchEl) searchEl.value = filter.search || '';
+                        if (cmdEl) cmdEl.value = filter.cmdClassifier || '';
+                        applyFilter();
+                    } catch (e) {
+                        console.error('Apply preset failed:', e);
+                    }
+                    if (presetsDropdown) presetsDropdown.classList.remove('open');
+                });
+
+                const del = document.createElement('button');
+                del.className = 'toolbar-presets-delete';
+                del.innerHTML = '&times;';
+                del.title = 'Delete preset';
+                del.addEventListener('click', async function(e) {
+                    e.stopPropagation();
+                    try {
+                        await fetch('/api/presets/' + p.id, { method: 'DELETE' });
+                        loadPresets();
+                    } catch (err) {
+                        console.error('Delete preset failed:', err);
+                    }
+                });
+
+                row.appendChild(btn);
+                row.appendChild(del);
+                presetList.appendChild(row);
             });
         } catch (e) {
             console.error('Load presets failed:', e);
@@ -1476,7 +1747,7 @@ function categoryAbbr(cat) {
         content.innerHTML =
             '<table class="kbd-table">' +
             '<tr><td><kbd>j</kbd> / <kbd>k</kbd> or <kbd>\u2193</kbd> / <kbd>\u2191</kbd></td><td>Next / previous message</td></tr>' +
-            '<tr><td><kbd>' + mod + '</kbd>+<kbd>F</kbd></td><td>Find in messages</td></tr>' +
+            '<tr><td><kbd>' + mod + '</kbd>+<kbd>F</kbd></td><td>Focus find input</td></tr>' +
             '<tr><td><kbd>' + mod + '</kbd>+<kbd>L</kbd></td><td>Focus filter dropdown</td></tr>' +
             '<tr><td><kbd>' + mod + '</kbd>+<kbd>G</kbd></td><td>Jump to message by number</td></tr>' +
             '<tr><td><kbd>?</kbd></td><td>Show this help</td></tr>' +
@@ -1493,32 +1764,18 @@ function categoryAbbr(cat) {
         }
     }
 
-    // --- Find Bar (jump between matches) ---
+    // --- Find (jump between matches in visible rows) ---
     var findMatches = [];
     var findIndex = -1;
 
-    function openFindBar() {
-        var bar = document.getElementById('find-bar');
-        if (!bar) return;
-        bar.style.display = 'flex';
-        var input = document.getElementById('find-input');
-        if (input) { input.focus(); input.select(); }
-    }
-
-    function closeFindBar() {
-        var bar = document.getElementById('find-bar');
-        if (bar) bar.style.display = 'none';
-        clearFindHighlights();
+    function clearFind() {
         var input = document.getElementById('find-input');
         if (input) input.value = '';
+        clearFindHighlights();
         findMatches = [];
         findIndex = -1;
         updateFindCount();
-    }
-
-    function isFindBarOpen() {
-        var bar = document.getElementById('find-bar');
-        return bar && bar.style.display !== 'none';
+        if (input) input.blur();
     }
 
     function clearFindHighlights() {
@@ -1593,7 +1850,6 @@ function categoryAbbr(cat) {
         var input = document.getElementById('find-input');
         var btnNext = document.getElementById('find-next');
         var btnPrev = document.getElementById('find-prev');
-        var btnClose = document.getElementById('find-close');
 
         if (input) {
             var findTimer = null;
@@ -1610,13 +1866,12 @@ function categoryAbbr(cat) {
                     findNext();
                 } else if (e.key === 'Escape') {
                     e.preventDefault();
-                    closeFindBar();
+                    clearFind();
                 }
             });
         }
         if (btnNext) btnNext.addEventListener('click', findNext);
         if (btnPrev) btnPrev.addEventListener('click', findPrev);
-        if (btnClose) btnClose.addEventListener('click', closeFindBar);
     })();
 
     document.addEventListener('keydown', function(e) {
@@ -1627,7 +1882,8 @@ function categoryAbbr(cat) {
         var mod = e.metaKey || e.ctrlKey;
         if (mod && e.key === 'f') {
             e.preventDefault();
-            openFindBar();
+            var fi = document.getElementById('find-input');
+            if (fi) { fi.focus(); fi.select(); }
             return;
         }
         if (mod && e.key === 'l') {
@@ -1644,10 +1900,6 @@ function categoryAbbr(cat) {
 
         // Escape — close dialogs or blur input
         if (e.key === 'Escape') {
-            if (isFindBarOpen()) {
-                closeFindBar();
-                return;
-            }
             var jumpDialog = document.getElementById('jump-dialog');
             var kbdHelp = document.getElementById('kbd-help');
             if ((jumpDialog && jumpDialog.style.display !== 'none') ||
@@ -1980,7 +2232,10 @@ function categoryAbbr(cat) {
         const tbody = document.getElementById('message-tbody');
         const statusMsgs = document.getElementById('status-messages');
         if (tbody && statusMsgs) {
-            statusMsgs.textContent = 'Messages: ' + tbody.children.length;
+            // Don't overwrite if filter indicator already set the text
+            if (!statusMsgs.classList.contains('status-filtered')) {
+                statusMsgs.textContent = 'Messages: ' + tbody.children.length;
+            }
         }
     }
 
@@ -1989,14 +2244,6 @@ function categoryAbbr(cat) {
     var syntaxHighlight = window.EEBusTracer ? EEBusTracer.syntaxHighlight : function(j) { return j; };
     var escapeHtml = window.EEBusTracer ? EEBusTracer.escapeHtml : function(t) { return t; };
 
-    // Re-render active detail tab on theme change (syntax highlighting colors)
-    document.addEventListener('theme-changed', function() {
-        if (currentMsg) {
-            var activeTab = document.querySelector('.detail-panel .tab.active');
-            if (activeTab) activeTab.click();
-        }
-        loadBookmarks();
-    });
 
     // --- Auto-Scroll Toggle ---
     var scrollContainer = document.querySelector('.message-table-container');
@@ -2030,6 +2277,14 @@ function categoryAbbr(cat) {
             autoScrollBtn.classList.remove('has-new');
         });
     }
+
+    // Re-render active detail tab on theme change
+    document.addEventListener('theme-changed', function() {
+        if (currentMsg) {
+            var activeTab = document.querySelector('.detail-panel .tab.active');
+            if (activeTab) activeTab.click();
+        }
+    });
 
     updateStatusBar();
 })();

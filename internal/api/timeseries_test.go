@@ -242,6 +242,110 @@ func TestExtractGenericData(t *testing.T) {
 	}
 }
 
+// TestExtractGenericData_IsActive verifies that the isActive field is extracted
+// for loadcontrol and setpoint descriptors, and remains nil for measurement.
+func TestExtractGenericData_IsActive(t *testing.T) {
+	boolPtr := func(v bool) *bool { return &v }
+
+	tests := []struct {
+		name       string
+		desc       ExtractionDescriptor
+		payload    string
+		wantLen    int
+		wantActive []*bool // expected IsActive per item
+	}{
+		{
+			name: "loadcontrol with isLimitActive true",
+			desc: builtInDescriptors["loadcontrol"],
+			payload: `{
+				"datagram": {"payload": {"cmd": [{"loadControlLimitListData": {
+					"loadControlLimitData": [
+						{"limitId": 0, "isLimitActive": true, "value": {"number": 4600, "scale": 0}}
+					]
+				}}]}}
+			}`,
+			wantLen:    1,
+			wantActive: []*bool{boolPtr(true)},
+		},
+		{
+			name: "loadcontrol with isLimitActive false",
+			desc: builtInDescriptors["loadcontrol"],
+			payload: `{
+				"datagram": {"payload": {"cmd": [{"loadControlLimitListData": {
+					"loadControlLimitData": [
+						{"limitId": 0, "isLimitActive": false, "value": {"number": 4600, "scale": 0}}
+					]
+				}}]}}
+			}`,
+			wantLen:    1,
+			wantActive: []*bool{boolPtr(false)},
+		},
+		{
+			name: "setpoint with isSetpointActive true and false",
+			desc: builtInDescriptors["setpoint"],
+			payload: `{
+				"datagram": {"payload": {"cmd": [{"setpointListData": {
+					"setpointData": [
+						{"setpointId": 1, "isSetpointActive": true, "value": {"number": 220, "scale": 0}},
+						{"setpointId": 2, "isSetpointActive": false, "value": {"number": 400, "scale": 0}}
+					]
+				}}]}}
+			}`,
+			wantLen:    2,
+			wantActive: []*bool{boolPtr(true), boolPtr(false)},
+		},
+		{
+			name: "measurement has no active field",
+			desc: builtInDescriptors["measurement"],
+			payload: `{
+				"datagram": {"payload": {"cmd": [{"measurementListData": {
+					"measurementData": [
+						{"measurementId": 1, "value": {"number": 100, "scale": 0}}
+					]
+				}}]}}
+			}`,
+			wantLen:    1,
+			wantActive: []*bool{nil},
+		},
+		{
+			name: "loadcontrol without isLimitActive key",
+			desc: builtInDescriptors["loadcontrol"],
+			payload: `{
+				"datagram": {"payload": {"cmd": [{"loadControlLimitListData": {
+					"loadControlLimitData": [
+						{"limitId": 0, "value": {"number": 4600, "scale": 0}}
+					]
+				}}]}}
+			}`,
+			wantLen:    1,
+			wantActive: []*bool{nil},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items := extractGenericData(json.RawMessage(tt.payload), tt.desc)
+			if len(items) != tt.wantLen {
+				t.Fatalf("expected %d items, got %d", tt.wantLen, len(items))
+			}
+			for i, wantActive := range tt.wantActive {
+				got := items[i].IsActive
+				if wantActive == nil {
+					if got != nil {
+						t.Errorf("item %d: IsActive = %v, want nil", i, *got)
+					}
+				} else {
+					if got == nil {
+						t.Errorf("item %d: IsActive = nil, want %v", i, *wantActive)
+					} else if *got != *wantActive {
+						t.Errorf("item %d: IsActive = %v, want %v", i, *got, *wantActive)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestExtractGenericSeries covers label enrichment, filterID, ordering, and classifier filtering.
 func TestExtractGenericSeries(t *testing.T) {
 	now := time.Now()
@@ -431,6 +535,49 @@ func TestExtractGenericSeries(t *testing.T) {
 		}
 		if series[1].ID != "1" {
 			t.Errorf("second series ID = %q, want %q", series[1].ID, "1")
+		}
+	})
+
+	t.Run("load control series preserves isActive", func(t *testing.T) {
+		msgs := []*model.Message{
+			{
+				ID: 1, Timestamp: now, CmdClassifier: "reply",
+				SpinePayload: json.RawMessage(`{
+					"datagram": {"payload": {"cmd": [{"loadControlLimitListData": {
+						"loadControlLimitData": [
+							{"limitId": 0, "isLimitActive": true, "value": {"number": 4600, "scale": 0}}
+						]
+					}}]}}
+				}`),
+			},
+			{
+				ID: 2, Timestamp: now.Add(time.Second), CmdClassifier: "write",
+				SpinePayload: json.RawMessage(`{
+					"datagram": {"payload": {"cmd": [{"loadControlLimitListData": {
+						"loadControlLimitData": [
+							{"limitId": 0, "isLimitActive": false, "value": {"number": 0, "scale": 0}}
+						]
+					}}]}}
+				}`),
+			},
+		}
+
+		series := extractGenericSeries(msgs, builtInDescriptors["loadcontrol"], nil, "")
+		if len(series) != 1 {
+			t.Fatalf("expected 1 series, got %d", len(series))
+		}
+		if len(series[0].DataPoints) != 2 {
+			t.Fatalf("expected 2 data points, got %d", len(series[0].DataPoints))
+		}
+
+		dp0 := series[0].DataPoints[0]
+		if dp0.IsActive == nil || *dp0.IsActive != true {
+			t.Errorf("dp0.IsActive = %v, want true", dp0.IsActive)
+		}
+
+		dp1 := series[0].DataPoints[1]
+		if dp1.IsActive == nil || *dp1.IsActive != false {
+			t.Errorf("dp1.IsActive = %v, want false", dp1.IsActive)
 		}
 	})
 
@@ -628,6 +775,77 @@ func TestAPI_Timeseries_Setpoint(t *testing.T) {
 	}
 	if tsResp.Series[0].DataPoints[0].Value != 220.0 {
 		t.Errorf("value = %f, want 220", tsResp.Series[0].DataPoints[0].Value)
+	}
+}
+
+func TestAPI_Timeseries_LoadControl_WithActive(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+	msgs := []*model.Message{
+		{
+			TraceID: trace.ID, SequenceNum: 1, Timestamp: now,
+			ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply",
+			FunctionSet: "LoadControlLimitListData",
+			SpinePayload: json.RawMessage(`{
+				"datagram": {"payload": {"cmd": [{"loadControlLimitListData": {
+					"loadControlLimitData": [
+						{"limitId": 0, "isLimitActive": true, "value": {"number": 4600, "scale": 0}}
+					]
+				}}]}}
+			}`),
+		},
+		{
+			TraceID: trace.ID, SequenceNum: 2, Timestamp: now.Add(time.Second),
+			ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "write",
+			FunctionSet: "LoadControlLimitListData",
+			SpinePayload: json.RawMessage(`{
+				"datagram": {"payload": {"cmd": [{"loadControlLimitListData": {
+					"loadControlLimitData": [
+						{"limitId": 0, "isLimitActive": false, "value": {"number": 0, "scale": 0}}
+					]
+				}}]}}
+			}`),
+		},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	resp, err := http.Get(ts.URL + "/api/traces/1/timeseries?type=loadcontrol")
+	if err != nil {
+		t.Fatalf("GET loadcontrol failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("GET loadcontrol status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	resp.Body.Close()
+
+	seriesArr, ok := body["series"].([]interface{})
+	if !ok || len(seriesArr) != 1 {
+		t.Fatalf("expected 1 series, got %v", body["series"])
+	}
+
+	series0 := seriesArr[0].(map[string]interface{})
+	dataPoints := series0["dataPoints"].([]interface{})
+	if len(dataPoints) != 2 {
+		t.Fatalf("expected 2 data points, got %d", len(dataPoints))
+	}
+
+	dp0 := dataPoints[0].(map[string]interface{})
+	if active, ok := dp0["isActive"]; !ok || active != true {
+		t.Errorf("dp0 isActive = %v, want true", dp0["isActive"])
+	}
+
+	dp1 := dataPoints[1].(map[string]interface{})
+	if active, ok := dp1["isActive"]; !ok || active != false {
+		t.Errorf("dp1 isActive = %v, want false", dp1["isActive"])
 	}
 }
 

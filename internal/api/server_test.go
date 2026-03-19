@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -507,8 +508,14 @@ func TestAPI_Correlation(t *testing.T) {
 	if len(related) != 1 {
 		t.Errorf("expected 1 related message, got %d", len(related))
 	}
-	if len(related) > 0 && related[0].Relationship != "request-response" {
-		t.Errorf("relationship = %q, want %q", related[0].Relationship, "request-response")
+	if len(related) > 0 && related[0].Relationship != "read-reply" {
+		t.Errorf("relationship = %q, want %q", related[0].Relationship, "read-reply")
+	}
+	if len(related) > 0 && related[0].LatencyMs == nil {
+		t.Error("expected latencyMs to be set")
+	}
+	if len(related) > 0 && related[0].LatencyMs != nil && *related[0].LatencyMs < 0 {
+		t.Errorf("latencyMs = %f, want >= 0", *related[0].LatencyMs)
 	}
 
 	// Get related for the response (msgCounterRef=42)
@@ -820,5 +827,261 @@ func TestAPI_MessagesSearch(t *testing.T) {
 	resp.Body.Close()
 	if len(results) != 1 {
 		t.Errorf("search results = %d, want 1", len(results))
+	}
+}
+
+func TestAPI_Conversation(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "MeasurementListData", DeviceSource: "devA", DeviceDest: "devB", MsgCounter: "1"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now.Add(time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", FunctionSet: "MeasurementListData", DeviceSource: "devB", DeviceDest: "devA", MsgCounter: "2", MsgCounterRef: "1"},
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now.Add(2 * time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "notify", FunctionSet: "MeasurementListData", DeviceSource: "devB", DeviceDest: "devA", MsgCounter: "3"},
+		// Different function set
+		{TraceID: trace.ID, SequenceNum: 4, Timestamp: now.Add(3 * time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "LoadControlLimitListData", DeviceSource: "devA", DeviceDest: "devB", MsgCounter: "4"},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	t.Run("conversation with 3 messages", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/traces/1/messages/1/conversation")
+		if err != nil {
+			t.Fatalf("GET conversation failed: %v", err)
+		}
+		if resp.StatusCode != 200 {
+			t.Errorf("status = %d, want 200", resp.StatusCode)
+		}
+		var conv ConversationResponse
+		json.NewDecoder(resp.Body).Decode(&conv)
+		resp.Body.Close()
+		if conv.Total != 3 {
+			t.Errorf("total = %d, want 3", conv.Total)
+		}
+		if len(conv.Messages) != 3 {
+			t.Errorf("messages len = %d, want 3", len(conv.Messages))
+		}
+	})
+
+	t.Run("different function set excluded", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/traces/1/messages/4/conversation")
+		if err != nil {
+			t.Fatalf("GET conversation failed: %v", err)
+		}
+		var conv ConversationResponse
+		json.NewDecoder(resp.Body).Decode(&conv)
+		resp.Body.Close()
+		if conv.Total != 1 {
+			t.Errorf("total = %d, want 1", conv.Total)
+		}
+	})
+
+	t.Run("non-SPINE message returns empty", func(t *testing.T) {
+		// Insert a non-SPINE message
+		shipMsg := &model.Message{
+			TraceID: trace.ID, SequenceNum: 10, Timestamp: now,
+			ShipMsgType: "init", DeviceSource: "devA", DeviceDest: "devB",
+		}
+		msgRepo.InsertMessage(shipMsg)
+
+		resp, err := http.Get(ts.URL + "/api/traces/1/messages/" + strconv.FormatInt(shipMsg.ID, 10) + "/conversation")
+		if err != nil {
+			t.Fatalf("GET conversation failed: %v", err)
+		}
+		var conv ConversationResponse
+		json.NewDecoder(resp.Body).Decode(&conv)
+		resp.Body.Close()
+		if conv.Total != 0 {
+			t.Errorf("total = %d, want 0", conv.Total)
+		}
+	})
+}
+
+func TestAPI_CorrelationResultStatus(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+
+	// Request with accepted result
+	acceptedPayload := `{"datagram":{"payload":{"cmd":[{"resultData":{"errorNumber":0}}]}}}`
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", MsgCounter: "10"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now.Add(50 * time.Millisecond), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", MsgCounter: "11", MsgCounterRef: "10", SpinePayload: []byte(acceptedPayload)},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	resp, err := http.Get(ts.URL + "/api/traces/1/messages/1/related")
+	if err != nil {
+		t.Fatalf("GET related failed: %v", err)
+	}
+	var related []RelatedMessage
+	json.NewDecoder(resp.Body).Decode(&related)
+	resp.Body.Close()
+
+	if len(related) != 1 {
+		t.Fatalf("expected 1 related, got %d", len(related))
+	}
+	if related[0].ResultStatus != "accepted" {
+		t.Errorf("resultStatus = %q, want %q", related[0].ResultStatus, "accepted")
+	}
+
+	// Request with rejected result
+	rejectedPayload := `{"datagram":{"payload":{"cmd":[{"resultData":{"errorNumber":1}}]}}}`
+	msgs2 := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now.Add(time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "write", MsgCounter: "20"},
+		{TraceID: trace.ID, SequenceNum: 4, Timestamp: now.Add(2 * time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", MsgCounter: "21", MsgCounterRef: "20", SpinePayload: []byte(rejectedPayload)},
+	}
+	msgRepo.InsertMessages(msgs2)
+
+	resp, err = http.Get(ts.URL + "/api/traces/1/messages/3/related")
+	if err != nil {
+		t.Fatalf("GET related failed: %v", err)
+	}
+	json.NewDecoder(resp.Body).Decode(&related)
+	resp.Body.Close()
+
+	if len(related) != 1 {
+		t.Fatalf("expected 1 related, got %d", len(related))
+	}
+	if related[0].ResultStatus != "rejected" {
+		t.Errorf("resultStatus = %q, want %q", related[0].ResultStatus, "rejected")
+	}
+	if related[0].Relationship != "write-result" {
+		t.Errorf("relationship = %q, want %q", related[0].Relationship, "write-result")
+	}
+}
+
+func TestAPI_OrphanedRequests(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", MsgCounter: "10"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now.Add(time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", MsgCounter: "11", MsgCounterRef: "10"},
+		// msg3: write with no response → orphaned
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now.Add(2 * time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "write", MsgCounter: "20"},
+		// msg4: notify with no response → NOT orphaned (notify never expects one)
+		{TraceID: trace.ID, SequenceNum: 4, Timestamp: now.Add(3 * time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "notify", MsgCounter: "30"},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/orphaned-requests")
+	if err != nil {
+		t.Fatalf("GET orphaned-requests failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("GET orphaned-requests status = %d, want 200", resp.StatusCode)
+	}
+	var result OrphanedRequestsResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+
+	// Only msg3 (write, counter=20) is orphaned; reply and notify are excluded
+	if len(result.IDs) != 1 {
+		t.Errorf("expected 1 orphaned ID, got %d: %v", len(result.IDs), result.IDs)
+	}
+}
+
+func TestAPI_OrphanedRequests_Empty(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", MsgCounter: "10"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now.Add(time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", MsgCounter: "11", MsgCounterRef: "10"},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/orphaned-requests")
+	if err != nil {
+		t.Fatalf("GET orphaned-requests failed: %v", err)
+	}
+	var result OrphanedRequestsResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+
+	// read(counter=10) is answered by reply(ref=10); reply is excluded → 0 orphans
+	if len(result.IDs) != 0 {
+		t.Errorf("expected 0 orphaned IDs, got %d: %v", len(result.IDs), result.IDs)
+	}
+}
+
+func TestAPI_UseCaseContext(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+
+	useCasePayload := `{"datagram":{"payload":{"cmd":[{"nodeManagementUseCaseData":{"useCaseInformation":[{"actor":"CEM","useCaseSupport":[{"useCaseName":"limitationOfPowerConsumption","useCaseAvailable":true}]}]}}]}}}`
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", FunctionSet: "NodeManagementUseCaseData", DeviceSource: "deviceA", SpinePayload: []byte(useCasePayload)},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/usecase-context")
+	if err != nil {
+		t.Fatalf("GET usecase-context failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("GET usecase-context status = %d, want 200", resp.StatusCode)
+	}
+	var result []UseCaseContext
+	json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 use case context, got %d", len(result))
+	}
+	if result[0].Abbreviation != "LPC" {
+		t.Errorf("abbreviation = %q, want %q", result[0].Abbreviation, "LPC")
+	}
+	if len(result[0].FunctionSets) == 0 {
+		t.Error("expected non-empty function sets")
+	}
+	if len(result[0].Devices) != 1 || result[0].Devices[0] != "deviceA" {
+		t.Errorf("devices = %v, want [deviceA]", result[0].Devices)
+	}
+}
+
+func TestAPI_UseCaseContext_Empty(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/usecase-context")
+	if err != nil {
+		t.Fatalf("GET usecase-context failed: %v", err)
+	}
+	var result []UseCaseContext
+	json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+
+	if len(result) != 0 {
+		t.Errorf("expected 0 use case contexts for empty trace, got %d", len(result))
 	}
 }

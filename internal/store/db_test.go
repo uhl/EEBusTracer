@@ -50,14 +50,23 @@ func TestMigrate(t *testing.T) {
 		t.Errorf("chart_definitions table not found: %v", err)
 	}
 
-	// Verify schema version is 4
+	// Verify schema version is 5
 	var version int
 	err = db.SqlDB().QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
 	if err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 4 {
-		t.Errorf("schema version = %d, want 4", version)
+	if version != 5 {
+		t.Errorf("schema version = %d, want 5", version)
+	}
+
+	// Verify V5 correlation indexes exist
+	for _, idxName := range []string{"idx_messages_msg_counter", "idx_messages_msg_counter_ref"} {
+		var name string
+		err := db.SqlDB().QueryRow("SELECT name FROM sqlite_master WHERE type='index' AND name=?", idxName).Scan(&name)
+		if err != nil {
+			t.Errorf("index %q not found: %v", idxName, err)
+		}
 	}
 }
 

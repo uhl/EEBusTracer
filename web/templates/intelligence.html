@@ -10,17 +10,17 @@
             </div>
         </div>
         <nav class="trace-nav">
-            <a href="/traces/{{.Trace.ID}}">Messages</a>
-            <a href="/traces/{{.Trace.ID}}/charts">Charts</a>
-            <a href="/traces/{{.Trace.ID}}/intelligence" class="active">Insights</a>
+            <a href="/traces/{{.Trace.ID}}" title="View message table">Messages</a>
+            <a href="/traces/{{.Trace.ID}}/charts" title="Visualize timeseries data">Charts</a>
+            <a href="/traces/{{.Trace.ID}}/intelligence" class="active" title="Protocol analysis: use cases, subscriptions, heartbeat accuracy">Insights</a>
         </nav>
     </div>
-    <div class="intel-tabs">
-        <button class="intel-tab active" data-tab="usecases">Use Cases</button>
-        <button class="intel-tab" data-tab="subscriptions">Subscriptions</button>
-        <button class="intel-tab" data-tab="metrics">Heartbeat Accuracy</button>
+    <div class="intel-tabs reveal">
+        <button class="intel-tab active" data-tab="usecases" title="EEBus use cases supported by each device">Use Cases</button>
+        <button class="intel-tab" data-tab="subscriptions" title="Active subscriptions and notification tracking">Subscriptions</button>
+        <button class="intel-tab" data-tab="metrics" title="Heartbeat interval jitter metrics">Heartbeat Accuracy</button>
     </div>
-    <div class="intel-content" id="intel-content">
+    <div class="intel-content reveal reveal-d1" id="intel-content">
         <div class="intel-panel active" id="panel-usecases">
             <div class="empty-state" id="usecases-loading">Loading use cases...</div>
         </div>

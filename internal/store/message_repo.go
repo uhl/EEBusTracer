@@ -147,12 +147,9 @@ func ftsPrefix(search string) string {
 	return strings.Join(words, " ")
 }
 
-// ListMessages returns messages for a trace, with optional filtering and pagination.
-func (r *MessageRepo) ListMessages(traceID int64, filter MessageFilter) ([]*model.Message, error) {
-	var conditions []string
-	var args []interface{}
-	useFTS := filter.Search != ""
-
+// buildFilterQuery builds the WHERE clause, FROM clause, and args for message filtering.
+// It returns the join clause (empty or FTS join), conditions, and args.
+func buildFilterQuery(traceID int64, filter MessageFilter) (ftsJoin string, conditions []string, args []interface{}) {
 	conditions = append(conditions, "m.trace_id = ?")
 	args = append(args, traceID)
 
@@ -161,8 +158,18 @@ func (r *MessageRepo) ListMessages(traceID int64, filter MessageFilter) ([]*mode
 		args = append(args, filter.CmdClassifier)
 	}
 	if filter.FunctionSet != "" {
-		conditions = append(conditions, "m.function_set = ?")
-		args = append(args, filter.FunctionSet)
+		fsets := strings.Split(filter.FunctionSet, ",")
+		if len(fsets) == 1 {
+			conditions = append(conditions, "m.function_set = ?")
+			args = append(args, fsets[0])
+		} else {
+			placeholders := strings.Repeat("?,", len(fsets))
+			placeholders = placeholders[:len(placeholders)-1]
+			conditions = append(conditions, "m.function_set IN ("+placeholders+")")
+			for _, fs := range fsets {
+				args = append(args, fs)
+			}
+		}
 	}
 	if filter.Direction != "" {
 		conditions = append(conditions, "m.direction = ?")
@@ -209,25 +216,28 @@ func (r *MessageRepo) ListMessages(traceID int64, filter MessageFilter) ([]*mode
 		args = append(args, filter.FeatureDest)
 	}
 
+	if filter.Search != "" {
+		conditions = append(conditions, "messages_fts MATCH ?")
+		args = append(args, ftsPrefix(filter.Search))
+		ftsJoin = "JOIN messages_fts ON messages_fts.rowid = m.id "
+	}
+
+	return ftsJoin, conditions, args
+}
+
+// ListMessages returns messages for a trace, with optional filtering and pagination.
+func (r *MessageRepo) ListMessages(traceID int64, filter MessageFilter) ([]*model.Message, error) {
+	ftsJoin, conditions, args := buildFilterQuery(traceID, filter)
+
 	selectCols := "m.id, m.trace_id, m.sequence_num, m.timestamp, m.direction, m.source_addr, m.dest_addr, " +
 		"m.raw_hex, m.normalized_json, m.ship_msg_type, m.ship_payload, m.spine_payload, " +
 		"m.cmd_classifier, m.function_set, m.msg_counter, m.msg_counter_ref, " +
 		"m.device_source, m.device_dest, m.entity_source, m.entity_dest, " +
 		"m.feature_source, m.feature_dest, m.parse_error"
 
-	var query string
-	if useFTS {
-		conditions = append(conditions, "messages_fts MATCH ?")
-		args = append(args, ftsPrefix(filter.Search))
-		query = "SELECT " + selectCols + " FROM messages m " +
-			"JOIN messages_fts ON messages_fts.rowid = m.id " +
-			"WHERE " + strings.Join(conditions, " AND ") +
-			" ORDER BY m.sequence_num ASC"
-	} else {
-		query = "SELECT " + selectCols + " FROM messages m " +
-			"WHERE " + strings.Join(conditions, " AND ") +
-			" ORDER BY m.sequence_num ASC"
-	}
+	query := "SELECT " + selectCols + " FROM messages m " + ftsJoin +
+		"WHERE " + strings.Join(conditions, " AND ") +
+		" ORDER BY m.sequence_num ASC"
 
 	limit := filter.Limit
 	if limit <= 0 {
@@ -245,6 +255,22 @@ func (r *MessageRepo) ListMessages(traceID int64, filter MessageFilter) ([]*mode
 	defer rows.Close()
 
 	return scanMessages(rows)
+}
+
+// CountFilteredMessages returns the total count of messages matching the filter,
+// ignoring Limit and Offset. This is useful for pagination metadata.
+func (r *MessageRepo) CountFilteredMessages(traceID int64, filter MessageFilter) (int, error) {
+	ftsJoin, conditions, args := buildFilterQuery(traceID, filter)
+
+	query := "SELECT COUNT(*) FROM messages m " + ftsJoin +
+		"WHERE " + strings.Join(conditions, " AND ")
+
+	var count int
+	err := r.db.QueryRow(query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count filtered messages: %w", err)
+	}
+	return count, nil
 }
 
 // FindByMsgCounter returns messages where msg_counter matches the given value.
@@ -303,6 +329,42 @@ func scanMessages(rows *sql.Rows) ([]*model.Message, error) {
 	return messages, rows.Err()
 }
 
+// FindConversationMessages returns all SPINE data messages between a device pair for a given function set.
+// The device pair is bidirectional (A→B and B→A are both included).
+// Returns (messages, totalCount, error).
+func (r *MessageRepo) FindConversationMessages(traceID int64, deviceA, deviceB, functionSet string, limit, offset int) ([]*model.Message, int, error) {
+	where := `m.trace_id = ? AND m.ship_msg_type = 'data' AND m.function_set = ?
+		AND ((m.device_source = ? AND m.device_dest = ?) OR (m.device_source = ? AND m.device_dest = ?))`
+	args := []interface{}{traceID, functionSet, deviceA, deviceB, deviceB, deviceA}
+
+	// Count total
+	var total int
+	countQuery := "SELECT COUNT(*) FROM messages m WHERE " + where
+	if err := r.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count conversation messages: %w", err)
+	}
+
+	// Fetch page
+	if limit <= 0 {
+		limit = 50
+	}
+	query := "SELECT " + messageCols("m") + " FROM messages m WHERE " + where +
+		" ORDER BY m.sequence_num ASC" +
+		fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("find conversation messages: %w", err)
+	}
+	defer rows.Close()
+
+	msgs, err := scanMessages(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return msgs, total, nil
+}
+
 // ListDistinctFunctionSets returns unique non-empty function set values for data messages in a trace.
 func (r *MessageRepo) ListDistinctFunctionSets(traceID int64) ([]string, error) {
 	rows, err := r.db.Query(
@@ -333,6 +395,38 @@ func (r *MessageRepo) CountMessages(traceID int64) (int, error) {
 		return 0, fmt.Errorf("count messages: %w", err)
 	}
 	return count, nil
+}
+
+// FindOrphanedRequestIDs returns message IDs for request-type data messages
+// (read, write, call) that have a msgCounter but no other message references
+// them via msgCounterRef. Notify and reply messages are excluded because they
+// are terminal in SPINE and never expect a response.
+func (r *MessageRepo) FindOrphanedRequestIDs(traceID int64) ([]int64, error) {
+	rows, err := r.db.Query(
+		`SELECT m.id FROM messages m
+		 WHERE m.trace_id = ? AND m.msg_counter != '' AND m.ship_msg_type = 'data'
+		   AND m.cmd_classifier IN ('read', 'write', 'call')
+		   AND NOT EXISTS (
+		     SELECT 1 FROM messages m2
+		     WHERE m2.trace_id = m.trace_id AND m2.msg_counter_ref = m.msg_counter
+		   )
+		 ORDER BY m.id`,
+		traceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("find orphaned request IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan orphaned ID: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func jsonStr(data json.RawMessage) *string {

@@ -52,6 +52,21 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	totalCount, err := s.msgRepo.CountFilteredMessages(traceID, filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("X-Total-Count", strconv.Itoa(totalCount))
+
+	unfilteredCount, err := s.msgRepo.CountMessages(traceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("X-Unfiltered-Count", strconv.Itoa(unfilteredCount))
+
 	writeJSON(w, http.StatusOK, messages)
 }
 

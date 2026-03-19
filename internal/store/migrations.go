@@ -48,7 +48,35 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if version < 5 {
+		if err := migrateV5(db); err != nil {
+			return fmt.Errorf("migrate v5: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func migrateV5(db *sql.DB) error {
+	stmts := []string{
+		`CREATE INDEX IF NOT EXISTS idx_messages_msg_counter ON messages(trace_id, msg_counter)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_msg_counter_ref ON messages(trace_id, msg_counter_ref)`,
+		`UPDATE schema_version SET version = 5`,
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("execute %q: %w", stmt[:min(40, len(stmt))], err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 func migrateV4(db *sql.DB) error {

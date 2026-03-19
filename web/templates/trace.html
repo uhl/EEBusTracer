@@ -37,9 +37,15 @@
             <div class="empty-state">No bookmarks yet</div>
         </div>
     </div>
+    <div class="sidebar-footer">
+        <form id="import-form" enctype="multipart/form-data">
+            <input type="file" id="import-file" accept=".eet,.eebt,.log" hidden>
+            <button type="button" id="btn-import" class="btn btn-sm btn-full">Import .eet / .log</button>
+        </form>
+    </div>
 </div>
 <div class="main-area">
-    <div class="trace-header">
+    <div class="trace-header reveal">
         <h2>{{.Trace.Name}}</h2>
         <div class="trace-menu">
             <button class="trace-menu-btn" id="trace-menu-btn" title="Actions">&#8942;</button>
@@ -49,69 +55,93 @@
             </div>
         </div>
         <nav class="trace-nav">
-            <a href="/traces/{{.Trace.ID}}" class="active">Messages</a>
-            <a href="/traces/{{.Trace.ID}}/charts">Charts</a>
-            <a href="/traces/{{.Trace.ID}}/intelligence">Insights</a>
+            <a href="/traces/{{.Trace.ID}}" class="active" title="View message table">Messages</a>
+            <a href="/traces/{{.Trace.ID}}/charts" title="Visualize timeseries data">Charts</a>
+            <a href="/traces/{{.Trace.ID}}/intelligence" title="Protocol analysis: use cases, subscriptions, heartbeat accuracy">Insights</a>
         </nav>
     </div>
-    <div class="filter-bar" id="filter-bar">
-        <input type="text" class="filter-input" id="filter-search" placeholder="Search messages...">
-        <select class="filter-select" id="filter-cmd">
-            <option value="">All Classifiers</option>
-            <option value="read">read</option>
-            <option value="reply">reply</option>
-            <option value="write">write</option>
-            <option value="call">call</option>
-            <option value="notify">notify</option>
-        </select>
-        <button class="btn btn-sm" id="btn-clear-filter">Reset</button>
-        <div class="filter-preset-controls">
-            <select class="filter-select" id="preset-select">
-                <option value="">Load Preset...</option>
+    <div class="toolbar reveal reveal-d1" id="toolbar">
+        <div class="toolbar-section toolbar-section-filter">
+            <span class="toolbar-label" title="Server-side search — filters and reloads the message list">Filter</span>
+            <input type="text" class="toolbar-input" id="filter-search"
+                   placeholder="Filter messages..."
+                   title="Search by device, function set, or payload content">
+            <select class="filter-select" id="filter-cmd"
+                    title="Filter by SPINE command classifier">
+                <option value="">All Classifiers</option>
+                <option value="read">read</option>
+                <option value="reply">reply</option>
+                <option value="write">write</option>
+                <option value="call">call</option>
+                <option value="notify">notify</option>
             </select>
-            <button class="btn btn-sm" id="btn-save-preset">Save</button>
+            <select class="filter-select" id="filter-usecase"
+                    title="Filter by EEBus use case context">
+                <option value="">All Use Cases</option>
+            </select>
+            <button class="btn btn-sm" id="btn-clear-filter"
+                    title="Clear all filters and show all messages">Reset</button>
+            <div class="toolbar-presets">
+                <button class="btn btn-sm" id="btn-presets"
+                        title="Filter presets">&#9733;</button>
+                <div class="toolbar-presets-dropdown" id="presets-dropdown">
+                    <div id="preset-list"></div>
+                    <button class="toolbar-presets-item toolbar-presets-save"
+                            id="btn-save-preset">Save current filter...</button>
+                </div>
+            </div>
+        </div>
+        <div class="toolbar-divider"></div>
+        <div class="toolbar-section">
+            <span class="toolbar-label" title="Client-side highlight — finds matches in the currently loaded rows">Find</span>
+            <input type="text" class="toolbar-input toolbar-input-find" id="find-input"
+                   placeholder="Find in view..."
+                   title="Highlight matching rows in the current view">
+            <button class="find-btn" id="find-prev"
+                    title="Previous (Shift+Enter)">&#9664;</button>
+            <button class="find-btn" id="find-next"
+                    title="Next (Enter)">&#9654;</button>
+            <span class="find-count" id="find-count"></span>
         </div>
     </div>
-    <div class="find-bar" id="find-bar" style="display:none;">
-        <input type="text" class="find-input" id="find-input" placeholder="Find in messages...">
-        <span class="find-count" id="find-count"></span>
-        <button class="find-btn" id="find-prev" title="Previous (Shift+Enter)">&#9650;</button>
-        <button class="find-btn" id="find-next" title="Next (Enter)">&#9660;</button>
-        <button class="find-btn" id="find-close" title="Close (Esc)">&times;</button>
-    </div>
-    <div class="message-table-container">
+    <div class="message-table-container reveal reveal-d2">
         <table class="message-table" id="message-table">
             <thead>
                 <tr>
                     <th class="col-bookmark"></th>
-                    <th class="col-timestamp">Timestamp</th>
-                    <th class="col-comm">Communication</th>
-                    <th class="col-classifier">Classifier</th>
-                    <th class="col-funcset">Function Set</th>
+                    <th class="col-seq" title="Sequence number">#</th>
+                    <th class="col-timestamp" title="Time when the message was captured">Timestamp</th>
+                    <th class="col-comm" title="Source and destination device">Communication</th>
+                    <th class="col-classifier" title="SPINE command type: read, reply, write, call, notify">Classifier</th>
+                    <th class="col-funcset" title="SPINE function set or SHIP message type">Function Set</th>
                 </tr>
             </thead>
             <tbody id="message-tbody">
                 {{range .Messages}}
                 <tr class="msg-row" data-id="{{.ID}}" onclick="showDetail({{.TraceID}}, {{.ID}})">
                     <td class="col-bookmark" id="bm-{{.ID}}"></td>
+                    <td class="col-seq">{{.SequenceNum}}</td>
                     <td>{{.Timestamp.Format "15:04:05.000"}}</td>
                     <td class="col-comm">{{.DeviceSource}} <span class="dir-arrow dir-{{.Direction}}">{{if eq .Direction "incoming"}}&#8592;{{else}}&#8594;{{end}}</span> {{.DeviceDest}}</td>
-                    <td>{{.CmdClassifier}}</td>
+                    <td class="cmd-{{.CmdClassifier}}">{{.CmdClassifier}}</td>
                     <td>{{.FunctionSet}}</td>
                 </tr>
                 {{end}}
             </tbody>
         </table>
+        <button class="btn btn-sm load-more-btn" id="load-more-btn"
+                style="display:none;"
+                title="Fetch the next batch of messages">Load more messages...</button>
         <button class="auto-scroll-btn active" id="auto-scroll-btn"
                 title="Auto-scroll to latest">&#8595;</button>
     </div>
     <div class="resize-handle" id="resize-handle"></div>
-    <div class="detail-panel" id="detail-panel">
+    <div class="detail-panel reveal reveal-d3" id="detail-panel">
         <div class="detail-tabs">
-            <button class="tab active" data-tab="overview">Overview</button>
-            <button class="tab" data-tab="decoded">Decoded JSON</button>
-            <button class="tab" data-tab="headers">Headers</button>
-            <button class="tab" data-tab="related">Related</button>
+            <button class="tab active" data-tab="overview" title="Decoded summary of message content">Overview</button>
+            <button class="tab" data-tab="decoded" title="Full JSON payload">Decoded JSON</button>
+            <button class="tab" data-tab="headers" title="SHIP and SPINE protocol headers">Headers</button>
+            <button class="tab" data-tab="related" title="Request/response pairs and correlated messages">Related</button>
         </div>
         <div class="detail-actions" id="detail-actions" style="display:none;">
             <button class="btn btn-sm" id="btn-bookmark-msg">Bookmark</button>
@@ -137,6 +167,7 @@
 </div>
 <script>
     window.TRACE_ID = {{.Trace.ID}};
+    window.TOTAL_MESSAGES = {{.TotalMessages}};
 </script>
 {{end}}
 

@@ -10,23 +10,23 @@
             </div>
         </div>
         <nav class="trace-nav">
-            <a href="/traces/{{.Trace.ID}}">Messages</a>
-            <a href="/traces/{{.Trace.ID}}/charts" class="active">Charts</a>
-            <a href="/traces/{{.Trace.ID}}/intelligence">Insights</a>
+            <a href="/traces/{{.Trace.ID}}" title="View message table">Messages</a>
+            <a href="/traces/{{.Trace.ID}}/charts" class="active" title="Visualize timeseries data">Charts</a>
+            <a href="/traces/{{.Trace.ID}}/intelligence" title="Protocol analysis: use cases, subscriptions, heartbeat accuracy">Insights</a>
         </nav>
     </div>
-    <div class="viz-controls" id="chart-controls">
-        <select class="filter-select" id="chart-selector"></select>
-        <button class="btn btn-sm" id="chart-new-btn">New Chart</button>
-        <button class="btn btn-sm btn-danger" id="chart-delete-btn" style="display:none">Delete Chart</button>
+    <div class="viz-controls reveal" id="chart-controls">
+        <select class="filter-select" id="chart-selector" title="Select a chart to display"></select>
+        <button class="btn btn-sm" id="chart-new-btn" title="Create a custom chart from trace data">New Chart</button>
+        <button class="btn btn-sm btn-danger" id="chart-delete-btn" style="display:none" title="Delete this chart definition">Delete Chart</button>
         <div class="chart-series-toggles" id="chart-series-toggles"></div>
-        <label class="viz-toggle">
+        <label class="viz-toggle" title="Show all series on a single chart">
             <input type="checkbox" id="chart-overlay"> Overlay
         </label>
-        <button class="btn btn-sm" id="chart-reset">Reset Zoom</button>
-        <button class="btn btn-sm" id="chart-export-csv">Export CSV</button>
+        <button class="btn btn-sm" id="chart-reset" title="Reset zoom to show all data">Reset Zoom</button>
+        <button class="btn btn-sm" id="chart-export-csv" title="Download chart data as CSV">Export CSV</button>
     </div>
-    <div class="viz-canvas" id="chart-canvas">
+    <div class="viz-canvas reveal reveal-d1" id="chart-canvas">
         <canvas id="chart-main"></canvas>
     </div>
 

@@ -350,6 +350,155 @@ func TestMessageRepo_FindByMsgCounter(t *testing.T) {
 	}
 }
 
+func TestMessageRepo_CountFilteredMessages(t *testing.T) {
+	db := newTestDB(t)
+	trace := createTestTrace(t, db)
+	repo := NewMessageRepo(db)
+
+	now := time.Now().Truncate(time.Second)
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "MeasurementListData", SpinePayload: []byte(`{"MeasurementListData":"x"}`)},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", FunctionSet: "MeasurementListData", SpinePayload: []byte(`{"MeasurementListData":"y"}`)},
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "LoadControlLimitListData", SpinePayload: []byte(`{"LoadControlLimitListData":"z"}`)},
+		{TraceID: trace.ID, SequenceNum: 4, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "write", FunctionSet: "LoadControlLimitListData", SpinePayload: []byte(`{"LoadControlLimitListData":"w"}`)},
+		{TraceID: trace.ID, SequenceNum: 5, Timestamp: now, ShipMsgType: "init"},
+	}
+	if err := repo.InsertMessages(msgs); err != nil {
+		t.Fatalf("InsertMessages failed: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		filter MessageFilter
+		want   int
+	}{
+		{"no filter", MessageFilter{}, 5},
+		{"by classifier", MessageFilter{CmdClassifier: "read"}, 2},
+		{"by FTS search", MessageFilter{Search: "MeasurementListData"}, 2},
+		{"by classifier and FTS", MessageFilter{CmdClassifier: "read", Search: "MeasurementListData"}, 1},
+		{"limit/offset ignored", MessageFilter{Limit: 1, Offset: 2}, 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count, err := repo.CountFilteredMessages(trace.ID, tt.filter)
+			if err != nil {
+				t.Fatalf("CountFilteredMessages failed: %v", err)
+			}
+			if count != tt.want {
+				t.Errorf("count = %d, want %d", count, tt.want)
+			}
+		})
+	}
+}
+
+func TestMessageRepo_FindConversationMessages(t *testing.T) {
+	db := newTestDB(t)
+	trace := createTestTrace(t, db)
+	repo := NewMessageRepo(db)
+
+	now := time.Now().Truncate(time.Second)
+	msgs := []*model.Message{
+		// Conversation: devA <-> devB, MeasurementListData
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "MeasurementListData", DeviceSource: "devA", DeviceDest: "devB"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now.Add(time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", FunctionSet: "MeasurementListData", DeviceSource: "devB", DeviceDest: "devA"},
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now.Add(2 * time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "notify", FunctionSet: "MeasurementListData", DeviceSource: "devB", DeviceDest: "devA"},
+		// Different function set — excluded
+		{TraceID: trace.ID, SequenceNum: 4, Timestamp: now.Add(3 * time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "LoadControlLimitListData", DeviceSource: "devA", DeviceDest: "devB"},
+		// Different device pair — excluded
+		{TraceID: trace.ID, SequenceNum: 5, Timestamp: now.Add(4 * time.Second), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "MeasurementListData", DeviceSource: "devC", DeviceDest: "devD"},
+		// SHIP handshake — excluded
+		{TraceID: trace.ID, SequenceNum: 6, Timestamp: now.Add(5 * time.Second), ShipMsgType: "init", CmdClassifier: "", FunctionSet: "MeasurementListData", DeviceSource: "devA", DeviceDest: "devB"},
+	}
+	if err := repo.InsertMessages(msgs); err != nil {
+		t.Fatalf("InsertMessages failed: %v", err)
+	}
+
+	t.Run("bidirectional", func(t *testing.T) {
+		got, total, err := repo.FindConversationMessages(trace.ID, "devA", "devB", "MeasurementListData", 50, 0)
+		if err != nil {
+			t.Fatalf("FindConversationMessages failed: %v", err)
+		}
+		if total != 3 {
+			t.Errorf("total = %d, want 3", total)
+		}
+		if len(got) != 3 {
+			t.Errorf("len = %d, want 3", len(got))
+		}
+		// Verify ordering
+		if len(got) >= 3 {
+			if got[0].SequenceNum != 1 || got[1].SequenceNum != 2 || got[2].SequenceNum != 3 {
+				t.Errorf("ordering: got seqs %d,%d,%d, want 1,2,3", got[0].SequenceNum, got[1].SequenceNum, got[2].SequenceNum)
+			}
+		}
+	})
+
+	t.Run("bidirectional reversed args", func(t *testing.T) {
+		// Passing devB, devA should give the same result
+		got, total, err := repo.FindConversationMessages(trace.ID, "devB", "devA", "MeasurementListData", 50, 0)
+		if err != nil {
+			t.Fatalf("FindConversationMessages failed: %v", err)
+		}
+		if total != 3 {
+			t.Errorf("total = %d, want 3", total)
+		}
+		if len(got) != 3 {
+			t.Errorf("len = %d, want 3", len(got))
+		}
+	})
+
+	t.Run("different function set excluded", func(t *testing.T) {
+		got, total, err := repo.FindConversationMessages(trace.ID, "devA", "devB", "LoadControlLimitListData", 50, 0)
+		if err != nil {
+			t.Fatalf("FindConversationMessages failed: %v", err)
+		}
+		if total != 1 {
+			t.Errorf("total = %d, want 1", total)
+		}
+		if len(got) != 1 {
+			t.Errorf("len = %d, want 1", len(got))
+		}
+	})
+
+	t.Run("different device pair excluded", func(t *testing.T) {
+		got, total, err := repo.FindConversationMessages(trace.ID, "devC", "devD", "MeasurementListData", 50, 0)
+		if err != nil {
+			t.Fatalf("FindConversationMessages failed: %v", err)
+		}
+		if total != 1 {
+			t.Errorf("total = %d, want 1", total)
+		}
+		if len(got) != 1 {
+			t.Errorf("len = %d, want 1", len(got))
+		}
+	})
+
+	t.Run("pagination", func(t *testing.T) {
+		got, total, err := repo.FindConversationMessages(trace.ID, "devA", "devB", "MeasurementListData", 2, 0)
+		if err != nil {
+			t.Fatalf("FindConversationMessages failed: %v", err)
+		}
+		if total != 3 {
+			t.Errorf("total = %d, want 3", total)
+		}
+		if len(got) != 2 {
+			t.Errorf("len = %d, want 2", len(got))
+		}
+
+		// Second page
+		got2, total2, err := repo.FindConversationMessages(trace.ID, "devA", "devB", "MeasurementListData", 2, 2)
+		if err != nil {
+			t.Fatalf("FindConversationMessages page 2 failed: %v", err)
+		}
+		if total2 != 3 {
+			t.Errorf("total = %d, want 3", total2)
+		}
+		if len(got2) != 1 {
+			t.Errorf("len = %d, want 1", len(got2))
+		}
+	})
+}
+
 func TestMessageRepo_ListDistinctFunctionSets(t *testing.T) {
 	db := newTestDB(t)
 	trace := createTestTrace(t, db)
@@ -391,5 +540,126 @@ func TestMessageRepo_ListDistinctFunctionSets(t *testing.T) {
 	}
 	if len(fsets2) != 0 {
 		t.Errorf("expected 0 function sets for empty trace, got %d", len(fsets2))
+	}
+}
+
+func TestMessageRepo_FindOrphanedRequestIDs(t *testing.T) {
+	db := newTestDB(t)
+	trace := createTestTrace(t, db)
+	repo := NewMessageRepo(db)
+
+	now := time.Now().Truncate(time.Second)
+	msgs := []*model.Message{
+		// msg1: read with counter=10, msg2 references it → NOT orphaned
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", MsgCounter: "10"},
+		// msg2: reply referencing 10 → excluded (reply never expects response)
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", MsgCounter: "11", MsgCounterRef: "10"},
+		// msg3: write with counter=20, nobody references it → orphaned
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "write", MsgCounter: "20"},
+		// msg4: non-data message → excluded
+		{TraceID: trace.ID, SequenceNum: 4, Timestamp: now, ShipMsgType: "init", CmdClassifier: "read", MsgCounter: "30"},
+		// msg5: call with counter=40, nobody references it → orphaned
+		{TraceID: trace.ID, SequenceNum: 5, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "call", MsgCounter: "40"},
+	}
+	if err := repo.InsertMessages(msgs); err != nil {
+		t.Fatalf("InsertMessages failed: %v", err)
+	}
+
+	ids, err := repo.FindOrphanedRequestIDs(trace.ID)
+	if err != nil {
+		t.Fatalf("FindOrphanedRequestIDs failed: %v", err)
+	}
+
+	// Orphaned: msg3 (write, counter=20), msg5 (call, counter=40)
+	if len(ids) != 2 {
+		t.Errorf("expected 2 orphaned IDs, got %d: %v", len(ids), ids)
+	}
+}
+
+func TestMessageRepo_FindOrphanedRequestIDs_AllAnswered(t *testing.T) {
+	db := newTestDB(t)
+	trace := createTestTrace(t, db)
+	repo := NewMessageRepo(db)
+
+	now := time.Now().Truncate(time.Second)
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", MsgCounter: "10"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", MsgCounter: "11", MsgCounterRef: "10"},
+	}
+	if err := repo.InsertMessages(msgs); err != nil {
+		t.Fatalf("InsertMessages failed: %v", err)
+	}
+
+	ids, err := repo.FindOrphanedRequestIDs(trace.ID)
+	if err != nil {
+		t.Fatalf("FindOrphanedRequestIDs failed: %v", err)
+	}
+	// msg1 (read, counter=10) → msg2 refs 10 → answered
+	// msg2 (reply) → excluded, replies never expect response
+	if len(ids) != 0 {
+		t.Errorf("expected 0 orphaned IDs, got %d: %v", len(ids), ids)
+	}
+}
+
+func TestMessageRepo_FindOrphanedRequestIDs_NotifyAndReplyExcluded(t *testing.T) {
+	db := newTestDB(t)
+	trace := createTestTrace(t, db)
+	repo := NewMessageRepo(db)
+
+	now := time.Now().Truncate(time.Second)
+	msgs := []*model.Message{
+		// notify with unreferenced counter → should NOT be orphaned
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "notify", MsgCounter: "50"},
+		// reply with unreferenced counter → should NOT be orphaned
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", MsgCounter: "51"},
+		// read with unreferenced counter → IS orphaned
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", MsgCounter: "52"},
+	}
+	if err := repo.InsertMessages(msgs); err != nil {
+		t.Fatalf("InsertMessages failed: %v", err)
+	}
+
+	ids, err := repo.FindOrphanedRequestIDs(trace.ID)
+	if err != nil {
+		t.Fatalf("FindOrphanedRequestIDs failed: %v", err)
+	}
+
+	// Only msg3 (read) is orphaned; notify and reply are excluded
+	if len(ids) != 1 {
+		t.Errorf("expected 1 orphaned ID, got %d: %v", len(ids), ids)
+	}
+}
+
+func TestMessageRepo_MultiFunctionSetFilter(t *testing.T) {
+	db := newTestDB(t)
+	trace := createTestTrace(t, db)
+	repo := NewMessageRepo(db)
+
+	now := time.Now().Truncate(time.Second)
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, FunctionSet: "MeasurementListData"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, FunctionSet: "LoadControlLimitListData"},
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, FunctionSet: "DeviceDiagnosisHeartbeatData"},
+	}
+	if err := repo.InsertMessages(msgs); err != nil {
+		t.Fatalf("InsertMessages failed: %v", err)
+	}
+
+	// Single function set
+	results, err := repo.ListMessages(trace.ID, MessageFilter{FunctionSet: "MeasurementListData"})
+	if err != nil {
+		t.Fatalf("single functionSet filter failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("single functionSet filter len = %d, want 1", len(results))
+	}
+
+	// Multiple function sets (comma-separated)
+	results, err = repo.ListMessages(trace.ID, MessageFilter{FunctionSet: "MeasurementListData,LoadControlLimitListData"})
+	if err != nil {
+		t.Fatalf("multi functionSet filter failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("multi functionSet filter len = %d, want 2", len(results))
 	}
 }

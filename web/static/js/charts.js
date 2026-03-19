@@ -45,6 +45,11 @@
 
     var CHART_COLORS = getChartColors();
 
+    document.addEventListener('theme-changed', function() {
+        CHART_COLORS = getChartColors();
+        if (currentData) renderChart(currentData);
+    });
+
     function init() {
         loadChartDefinitions();
     }
@@ -177,10 +182,17 @@
         });
 
         var datasets = data.series.map(function(s, i) {
-            return {
+            var hasActiveState = s.dataPoints.some(function(dp) {
+                return dp.isActive !== undefined && dp.isActive !== null;
+            });
+            var ds = {
                 label: s.label,
                 data: s.dataPoints.map(function(dp) {
-                    return { x: new Date(dp.timestamp), y: dp.value };
+                    var pt = { x: new Date(dp.timestamp), y: dp.value };
+                    if (dp.isActive !== undefined && dp.isActive !== null) {
+                        pt.isActive = dp.isActive;
+                    }
+                    return pt;
                 }),
                 borderColor: CHART_COLORS[i % CHART_COLORS.length],
                 backgroundColor: CHART_COLORS[i % CHART_COLORS.length] + '33',
@@ -193,15 +205,66 @@
                 yAxisID: unitToAxisId[s.unit || ''],
                 _unit: s.unit || ''
             };
+            if (hasActiveState) {
+                ds.segment = {
+                    borderDash: function(ctx) {
+                        return ctx.p1.raw.isActive === false ? [6, 3] : undefined;
+                    }
+                };
+                ds._hasActiveState = true;
+            }
+            return ds;
         });
 
+        var activeTransitionPlugin = {
+            id: 'activeTransitionPlugin',
+            afterDatasetsDraw: function(chart) {
+                var ctx2d = chart.ctx;
+                var chartArea = chart.chartArea;
+                chart.data.datasets.forEach(function(dataset, dsIndex) {
+                    if (!dataset._hasActiveState) return;
+                    var meta = chart.getDatasetMeta(dsIndex);
+                    if (meta.hidden) return;
+                    var data2 = dataset.data;
+                    for (var j = 1; j < data2.length; j++) {
+                        var prev = data2[j - 1];
+                        var curr = data2[j];
+                        if (prev.isActive === undefined || curr.isActive === undefined) continue;
+                        if (prev.isActive === curr.isActive) continue;
+                        var xPos = meta.data[j].x;
+                        var lineColor = cssVar('--chart-annotation-line') || '#94a3b8';
+                        var textColor = cssVar('--chart-annotation-text') || '#475569';
+                        ctx2d.save();
+                        ctx2d.beginPath();
+                        ctx2d.setLineDash([4, 3]);
+                        ctx2d.strokeStyle = lineColor;
+                        ctx2d.lineWidth = 1;
+                        ctx2d.moveTo(xPos, chartArea.top);
+                        ctx2d.lineTo(xPos, chartArea.bottom);
+                        ctx2d.stroke();
+                        ctx2d.setLineDash([]);
+                        var label = curr.isActive ? 'ON' : 'OFF';
+                        ctx2d.font = "bold 9px 'SF Mono', monospace";
+                        ctx2d.fillStyle = textColor;
+                        ctx2d.textAlign = 'center';
+                        ctx2d.fillText(label, xPos, chartArea.top - 4);
+                        ctx2d.restore();
+                    }
+                });
+            }
+        };
+
         var ctx = chartCanvas.getContext('2d');
+        var hasAnyActiveState = datasets.some(function(ds) { return ds._hasActiveState; });
+
         chartInstance = new Chart(ctx, {
             type: 'line',
             data: { datasets: datasets },
+            plugins: hasAnyActiveState ? [activeTransitionPlugin] : [],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                layout: hasAnyActiveState ? { padding: { top: 14 } } : {},
                 interaction: {
                     mode: 'nearest',
                     intersect: false
@@ -223,7 +286,7 @@
                             },
                             ticks: {
                                 color: cssVar('--chart-tick'),
-                                font: { family: "'SF Mono', monospace", size: 10 }
+                                font: { family: "'JetBrains Mono', 'SF Mono', monospace", size: 10 }
                             }
                         }
                     };
@@ -237,7 +300,7 @@
                             },
                             ticks: {
                                 color: cssVar('--chart-tick'),
-                                font: { family: "'SF Mono', monospace", size: 10 }
+                                font: { family: "'JetBrains Mono', 'SF Mono', monospace", size: 10 }
                             }
                         };
                         if (u) {
@@ -245,7 +308,7 @@
                                 display: true,
                                 text: u,
                                 color: cssVar('--chart-tick'),
-                                font: { family: "'SF Mono', monospace", size: 11 }
+                                font: { family: "'JetBrains Mono', 'SF Mono', monospace", size: 11 }
                             };
                         }
                     });
@@ -261,8 +324,8 @@
                         borderWidth: 1,
                         titleColor: cssVar('--chart-tooltip-title'),
                         bodyColor: cssVar('--chart-tooltip-body'),
-                        titleFont: { family: "'SF Mono', monospace", size: 11 },
-                        bodyFont: { family: "'SF Mono', monospace", size: 11 },
+                        titleFont: { family: "'JetBrains Mono', 'SF Mono', monospace", size: 11 },
+                        bodyFont: { family: "'JetBrains Mono', 'SF Mono', monospace", size: 11 },
                         callbacks: {
                             label: function(context) {
                                 var label = context.dataset.label || '';
@@ -271,6 +334,10 @@
                                 if (val !== null && val !== undefined) {
                                     label += ': ' + val;
                                     if (unit) label += ' ' + unit;
+                                }
+                                var raw = context.raw;
+                                if (raw && raw.isActive !== undefined) {
+                                    label += raw.isActive ? ' (active)' : ' (inactive)';
                                 }
                                 return label;
                             }
@@ -520,15 +587,6 @@
             URL.revokeObjectURL(url);
         });
     }
-
-    // Re-render chart on theme change
-    document.addEventListener('theme-changed', function() {
-        CHART_COLORS = getChartColors();
-        if (currentData) {
-            buildSeriesToggles(currentData.series);
-            renderChart(currentData);
-        }
-    });
 
     init();
 })();

@@ -24,8 +24,6 @@
         };
     }
     refreshCmdColors();
-
-    // Re-read colors on theme change
     document.addEventListener('theme-changed', refreshCmdColors);
 
     // HTML escaping

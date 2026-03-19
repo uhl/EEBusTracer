@@ -1,31 +1,28 @@
 {{define "layout"}}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EEBus Tracer{{if .Title}} - {{.Title}}{{end}}</title>
-    <script>
-        (function() {
-            var t = localStorage.getItem('eebustracer-theme') || 'light';
-            document.documentElement.setAttribute('data-theme', t);
-        })();
-    </script>
+    <link rel="preload" href="/static/fonts/SpaceGrotesk[wght].woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/static/fonts/JetBrainsMono[wght].woff2" as="font" type="font/woff2" crossorigin>
     <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
     <link rel="stylesheet" href="/static/css/style.css">
+    <script>(function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme:light)').matches?'light':'dark'}document.documentElement.setAttribute('data-theme',t);})()</script>
 </head>
 <body>
-    <header class="top-bar">
+    <header class="top-bar reveal">
         <div class="top-bar-left">
             <a href="/" class="app-name">EEBus Tracer</a>
             <nav class="top-nav">
-                <a href="/discovery" class="nav-link">Discovery</a>
-                <a href="/about" class="nav-link">About</a>
+                <a href="/discovery" class="nav-link" title="Discover EEBus devices on the local network">Discovery</a>
+                <a href="/about" class="nav-link" title="Version, dependencies, and system info">About</a>
             </nav>
         </div>
         <div class="top-bar-center">
             <div class="capture-controls">
-                <select id="capture-mode" class="mode-select">
+                <select id="capture-mode" class="mode-select" title="Select capture source type">
                     <option value="udp">UDP</option>
                     <option value="tcp">TCP</option>
                     <option value="logtail">Log Tail</option>
@@ -49,51 +46,67 @@
                 <datalist id="recent-hosts-udp"></datalist>
                 <datalist id="recent-hosts-tcp"></datalist>
                 <datalist id="recent-paths"></datalist>
-                <button id="btn-start-capture" class="btn btn-start"{{if .Capturing}} disabled{{end}}>Start Capture</button>
-                <button id="btn-stop-capture" class="btn btn-stop"{{if not .Capturing}} disabled{{end}}>Stop Capture</button>
+                <button id="capture-expand-btn" class="capture-expand-btn"
+                        title="Show capture controls">Capture &#9656;</button>
+                <button id="btn-start-capture" class="btn btn-start"{{if .Capturing}} disabled{{end}} title="Start recording messages">Start Capture</button>
+                <button id="btn-stop-capture" class="btn btn-stop"{{if not .Capturing}} disabled{{end}} title="Stop recording">Stop Capture</button>
                 <span id="capture-status" class="capture-status">
                     {{if .Capturing}}Recording...{{else}}Idle{{end}}
                 </span>
             </div>
         </div>
         <div class="top-bar-right">
-            <button class="theme-toggle" id="theme-toggle" title="Toggle theme">
+            <button id="theme-toggle" class="btn btn-sm" title="Toggle theme" aria-label="Toggle theme">
                 <span id="theme-icon"></span>
             </button>
         </div>
     </header>
 
-    <div class="main-container">
+    <div class="main-container reveal reveal-d1">
         {{template "content" .}}
     </div>
 
-    <footer class="status-bar">
+    <footer class="status-bar reveal reveal-d2">
         <span id="status-messages">Messages: 0</span>
         <span id="status-clients">Clients: 0</span>
         <span class="status-version">v{{.Version}}</span>
     </footer>
 
+    <div class="noise-overlay" aria-hidden="true"></div>
+
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/app.js"></script>
     <script>
-        (function() {
-            var toggle = document.getElementById('theme-toggle');
-            var icon = document.getElementById('theme-icon');
-            function updateIcon() {
-                var current = document.documentElement.getAttribute('data-theme') || 'light';
-                icon.textContent = current === 'dark' ? '\u2600' : '\u263E';
-            }
+    (function() {
+        var toggle = document.getElementById('theme-toggle');
+        var icon = document.getElementById('theme-icon');
+        if (!toggle) return;
+        function updateIcon() {
+            var theme = document.documentElement.getAttribute('data-theme') || 'dark';
+            icon.textContent = theme === 'dark' ? '\u2600' : '\u263E';
+            toggle.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+        }
+        updateIcon();
+        toggle.addEventListener('click', function() {
+            var current = document.documentElement.getAttribute('data-theme') || 'dark';
+            var next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            try { localStorage.setItem('theme', next); } catch(e) {}
             updateIcon();
-            toggle.addEventListener('click', function() {
-                var current = document.documentElement.getAttribute('data-theme') || 'light';
-                var next = current === 'dark' ? 'light' : 'dark';
+            document.dispatchEvent(new CustomEvent('theme-changed', { detail: { theme: next } }));
+        });
+        // Follow system theme changes when no explicit preference is stored
+        if (window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function(e) {
+                if (localStorage.getItem('theme')) return;
+                var next = e.matches ? 'light' : 'dark';
                 document.documentElement.setAttribute('data-theme', next);
-                localStorage.setItem('eebustracer-theme', next);
                 updateIcon();
                 document.dispatchEvent(new CustomEvent('theme-changed', { detail: { theme: next } }));
             });
-        })();
+        }
+    })();
     </script>
-    <script src="/static/js/common.js"></script>
-    <script src="/static/js/app.js"></script>
 </body>
 </html>
 {{end}}

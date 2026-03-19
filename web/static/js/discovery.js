@@ -125,13 +125,15 @@
         }
 
         let html = '';
+        let cardIndex = 0;
         keys.sort().forEach(function(key) {
             const d = devices[key];
             const onlineClass = d.online ? 'online' : 'offline';
             const addrs = d.addresses ? d.addresses.join(', ') : 'unknown';
             const connectAddr = d.addresses && d.addresses.length > 0 ? d.addresses[0] : '';
 
-            html += '<div class="discovery-card">';
+            html += '<div class="discovery-card reveal" style="animation-delay: ' + (cardIndex * 80) + 'ms">';
+            cardIndex++;
             html += '<div class="discovery-card-header">';
             html += '<span class="discovery-name">' + escapeHtml(d.instanceName) + '</span>';
             html += '<span class="discovery-badge ' + onlineClass + '">' + (d.online ? 'Online' : 'Offline') + '</span>';

@@ -133,8 +133,8 @@ modules. No forking required.
 ### Enhanced Message Correlation
 
 - [ ] Visual grouping of correlated messages (expand/collapse)
-- [ ] Highlight orphaned requests (no matching response)
-- [ ] Filter messages by use case context
+- [x] Highlight orphaned requests (no matching response) — v0.5.0
+- [x] Filter messages by use case context — v0.5.0
 
 ### WebSocket Proxy Capture
 

@@ -15,6 +15,7 @@ type TimeseriesDataPoint struct {
 	Timestamp time.Time `json:"timestamp"`
 	Value     float64   `json:"value"`
 	MessageID int64     `json:"messageId"`
+	IsActive  *bool     `json:"isActive,omitempty"`
 }
 
 // TimeseriesSeries represents a named series of data points.
@@ -39,6 +40,7 @@ type ExtractionDescriptor struct {
 	DataArrayKey string   // nested array key, e.g. "measurementData"
 	IDField      string   // ID field name, e.g. "measurementId"
 	Classifiers  []string // accepted cmdClassifier values
+	ActiveField  string   // optional boolean field, e.g. "isLimitActive"
 }
 
 // SeriesLabel provides label and unit for a timeseries series.
@@ -49,8 +51,9 @@ type SeriesLabel struct {
 
 // GenericDataItem is a single extracted data point (ID + value).
 type GenericDataItem struct {
-	ID    string
-	Value float64
+	ID       string
+	Value    float64
+	IsActive *bool
 }
 
 // builtInDescriptors maps the known timeseries type names to their extraction descriptors.
@@ -66,12 +69,14 @@ var builtInDescriptors = map[string]ExtractionDescriptor{
 		DataArrayKey: "loadControlLimitData",
 		IDField:      "limitId",
 		Classifiers:  []string{"reply", "notify", "write"},
+		ActiveField:  "isLimitActive",
 	},
 	"setpoint": {
 		CmdKey:       "setpointListData",
 		DataArrayKey: "setpointData",
 		IDField:      "setpointId",
 		Classifiers:  []string{"reply", "notify"},
+		ActiveField:  "isSetpointActive",
 	},
 }
 
@@ -254,10 +259,21 @@ func extractGenericData(spinePayload json.RawMessage, desc ExtractionDescriptor)
 				continue
 			}
 
-			items = append(items, GenericDataItem{
+			item := GenericDataItem{
 				ID:    id.String(),
 				Value: val,
-			})
+			}
+
+			if desc.ActiveField != "" {
+				if activeRaw, exists := entry[desc.ActiveField]; exists {
+					var active bool
+					if err := json.Unmarshal(activeRaw, &active); err == nil {
+						item.IsActive = &active
+					}
+				}
+			}
+
+			items = append(items, item)
 		}
 	}
 	return items
@@ -306,11 +322,16 @@ func extractGenericSeries(msgs []*model.Message, desc ExtractionDescriptor, labe
 				seriesMap[item.ID] = series
 				seriesOrder = append(seriesOrder, item.ID)
 			}
-			series.DataPoints = append(series.DataPoints, TimeseriesDataPoint{
+			dp := TimeseriesDataPoint{
 				Timestamp: msg.Timestamp,
 				Value:     item.Value,
 				MessageID: msg.ID,
-			})
+			}
+			if item.IsActive != nil {
+				active := *item.IsActive
+				dp.IsActive = &active
+			}
+			series.DataPoints = append(series.DataPoints, dp)
 		}
 	}
 

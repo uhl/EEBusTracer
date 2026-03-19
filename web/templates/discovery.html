@@ -4,17 +4,17 @@
 
 {{define "content"}}
 <div class="discovery-page">
-    <div class="discovery-header">
+    <div class="discovery-header reveal">
         <h2>mDNS Device Discovery</h2>
         <p>Discover EEBus devices on your local network via <code>_ship._tcp</code> mDNS announcements.</p>
         <div class="discovery-actions">
-            <button id="btn-mdns-start" class="btn btn-start">Start Discovery</button>
-            <button id="btn-mdns-stop" class="btn btn-stop" disabled>Stop Discovery</button>
+            <button id="btn-mdns-start" class="btn btn-start" title="Scan for EEBus devices via mDNS">Start Discovery</button>
+            <button id="btn-mdns-stop" class="btn btn-stop" disabled title="Stop device scanning">Stop Discovery</button>
             <span id="mdns-status" class="capture-status">Stopped</span>
         </div>
     </div>
 
-    <div id="discovery-devices" class="discovery-grid">
+    <div id="discovery-devices" class="discovery-grid reveal reveal-d1">
         <div class="empty-state">Click "Start Discovery" to scan for EEBus devices</div>
     </div>
 </div>

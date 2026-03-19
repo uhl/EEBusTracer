@@ -62,6 +62,25 @@ var useCaseAbbreviations = map[string]string{
 	"monitoringOfPowerConsumptionOfRoomHeatingSystemFunction": "MOPCRHSF",
 }
 
+// UseCaseFunctionSets maps use case abbreviations to the SPINE function sets
+// typically associated with that use case. This is a best-effort static mapping.
+var UseCaseFunctionSets = map[string][]string{
+	"LPC": {"LoadControlLimitListData", "LoadControlLimitDescriptionListData",
+		"LoadControlLimitConstraintsListData"},
+	"LPP": {"LoadControlLimitListData", "LoadControlLimitDescriptionListData",
+		"LoadControlLimitConstraintsListData"},
+	"MPC": {"MeasurementListData", "MeasurementDescriptionListData",
+		"MeasurementConstraintsListData"},
+	"MGCP": {"MeasurementListData", "MeasurementDescriptionListData",
+		"MeasurementConstraintsListData"},
+	"EVCC": {"DeviceConfigurationKeyValueListData",
+		"DeviceConfigurationKeyValueDescriptionListData",
+		"IdentificationListData"},
+	"MOB":  {"MeasurementListData", "MeasurementDescriptionListData"},
+	"MOI":  {"MeasurementListData", "MeasurementDescriptionListData"},
+	"MOPVS": {"MeasurementListData", "MeasurementDescriptionListData"},
+}
+
 // DetectUseCases parses nodeManagementUseCaseData from messages to identify
 // active use cases per device.
 func DetectUseCases(msgs []*model.Message) []DeviceUseCases {

@@ -7,7 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-19
+
 ### Added
+- Correlated message highlighting: selecting a message highlights its
+  request/response partners in the message table with a teal left border
+- Orphaned request detection: requests with no response are marked with a red
+  dot in the sequence column and a warning banner in the detail overview
+- `GET /api/traces/{id}/orphaned-requests` endpoint returning IDs of
+  unanswered request messages
+- Use-case-context filtering: new dropdown in filter toolbar filters messages
+  by EEBus use case (e.g., LPC shows LoadControlLimit messages from
+  participating devices)
+- `GET /api/traces/{id}/usecase-context` endpoint returning detected use cases
+  with associated devices and function sets
+- Multi-value function set filtering (comma-separated) in message list API
+- Response latency in Related tab (time delta between request and reply)
+- Richer correlation types: `read-reply`, `write-result`, `call-result`
+  (previously all `request-response`)
+- Result status badges (accepted/rejected) for SPINE reply messages containing
+  `resultData`
+- Feature conversation grouping: "Conversation" section in Related tab shows all
+  messages between the same device pair and function set
+- `GET /api/traces/{id}/messages/{mid}/conversation` endpoint with pagination
+- DB indexes on `msg_counter` and `msg_counter_ref` columns (schema v5)
+
+### Changed
+- Related tab redesigned with "Direct Correlation" and "Conversation" sections
+
+### Changed
+- Capture controls auto-collapse on trace pages when not actively capturing,
+  reducing visual clutter; a compact "Capture" button expands them on demand;
+  controls auto-expand when a capture is active and re-collapse when stopped
+- Filter preset icon changed from gear (&#9881;) to star (&#9733;) to better
+  convey "saved presets" rather than "settings"
+- Filter and Find toolbar sections are now visually distinct: the Filter section
+  has a contained panel background with border radius, and the Find input is
+  narrower, preventing confusion between the server-side filter (FTS round-trip)
+  and client-side find (highlight in view)
+- Messages list API endpoint (`GET /api/traces/{id}/messages`) now returns an
+  `X-Total-Count` response header with the total number of matching messages,
+  enabling pagination-aware UIs
+- Trace page initial load capped at 2,000 messages (was 100,000); a "Load more"
+  button fetches additional pages of 2,000 rows using offset pagination, avoiding
+  browser lockups on large traces
+
+### Fixed
+- Filter active indicator: when a filter reduces the visible message set, the
+  filter toolbar section shows an accent border and the status bar displays
+  "Showing X of Y messages" in accent color; clearing the filter restores
+  the normal state
+- Message table no longer renders up to 100K DOM rows on filter; capped at
+  2,000 per page with load-more pagination
+
+### Added
+- Sequence number column (`#`) in the message table, making `Ctrl+G` "Jump to
+  message" discoverable and usable
+- Classifier color-coding in message table rows: read (teal), reply (green),
+  write (amber), call (purple), notify (blue) — matching the existing detail
+  panel badge colors
+- Delete button on filter presets: hover a preset in the dropdown to reveal a
+  `×` button that deletes it via the existing `DELETE /api/presets/{id}` endpoint
+- Descriptive tooltips on all UI controls: toolbar inputs, nav tabs, column
+  headers, detail panel tabs, chart controls, intelligence tabs, discovery
+  buttons, and capture controls; uses native HTML `title` attributes for
+  browser-native hover hints
+- Light theme toggle: "Blueprint" light theme with warm cream/navy palette,
+  togglable via sun/moon button in top bar; preference persists via localStorage;
+  auto-detects system dark/light preference via `prefers-color-scheme` when no
+  explicit choice is stored, and follows live system theme changes;
+  all CSS custom properties switch via `[data-theme="light"]` override block;
+  charts, syntax highlighting, and detail panel re-render on theme change
+
+### Changed
+- Unified filter & find toolbar on the trace page: merged the separate filter
+  bar and hidden find bar (Ctrl+F) into a single always-visible toolbar with
+  labeled FILTER and FIND sections separated by a vertical divider; filter
+  presets consolidated from a select dropdown + save button into a single
+  gear-icon dropdown with saved presets and a "Save current filter..." action;
+  find input is always visible (Ctrl+F focuses it); arrows use triangular
+  glyphs matching the oscillograph aesthetic
+- Complete visual redesign: dark-only "Oscillograph" aesthetic replacing the
+  dual light/dark Catppuccin theme; warm-tinted dark palette inspired by
+  high-end protocol analyzers and oscilloscopes (amber/gold accent, teal data,
+  phosphor green success, neon chart colors)
+- Self-hosted variable fonts: Space Grotesk (headings, nav, buttons) and
+  JetBrains Mono (tables, JSON, timestamps, data) as embedded WOFF2 assets,
+  replacing system monospace fallbacks
+- Atmospheric effects: CRT phosphor grain noise texture overlay, oscilloscope
+  graticule grid pattern on main content area, amber glow accents on focused
+  and hovered elements, gradient edge lines on sidebar and detail panel
+- Inset shadow on all input and select elements for recessed instrument control
+  feel; refined thin scrollbar with amber-tinted thumb
+- Page load animations: staggered reveal-up sequence on all pages (top bar,
+  main container, status bar, page sections) using CSS animation delays
+- Hover states: message rows and trace items gain translateY(-1px) lift with
+  amber glow left border; buttons gain glow ring; cards lift with shadow
+- New message arrival animation: slideInLeft on dynamically inserted table rows
+  during live capture
+- Auto-scroll pulse redesigned with amber glow instead of blue
+- Discovery cards render with staggered entrance animation
+- Removed theme toggle button and light theme; UI is now dark-only
+
+### Added
+- Active state awareness in charts: when a Load Control Limit or Setpoint has
+  `isActive = false` in the SPINE payload, the chart renders dashed line segments
+  for inactive values, vertical annotation lines with ON/OFF labels at state
+  transitions, and active/inactive status in tooltips
+- `IsActive *bool` field on `TimeseriesDataPoint` (JSON: `isActive`, omitted
+  when nil for backward compatibility)
+- `ActiveField` on `ExtractionDescriptor` for parameterized active-state
+  extraction (`isLimitActive` for loadcontrol, `isSetpointActive` for setpoint)
+- CSS custom properties `--chart-annotation-line` and `--chart-annotation-text`
+  for theme-aware annotation styling (light and dark themes)
 - About page (`/about`) in the web UI showing project info (name, version,
   description, license, author), dependency versions (from Go build info), and
   system/runtime information (Go version, OS, architecture, CPUs)

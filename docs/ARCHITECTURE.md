@@ -103,8 +103,12 @@ internal/api/          Web interface backend
                        - discovery.go: auto-discovery of chartable SPINE data
                          (introspects payloads for ScaledNumber values)
                        - charts.go: chart definition CRUD + data rendering endpoint
-                       - correlation.go: message correlation by msgCounter
-                       - usecases.go: use case API handler
+                       - correlation.go: message correlation by msgCounter/Ref,
+                         latency computation, result status extraction,
+                         conversation grouping by device pair + function set,
+                         orphaned request detection
+                       - usecases.go: use case API handler + use-case-context
+                         filtering endpoint (maps use cases to function sets)
                        - subscriptions.go: subscription/binding API handlers
                        - metrics.go: heartbeat accuracy metrics API handler + CSV export
                        - hub.go: WebSocket fan-out hub with typed events
@@ -114,7 +118,8 @@ internal/api/          Web interface backend
 
 internal/analysis/     Protocol intelligence and analysis
                        - usecases.go: detect use cases from
-                         nodeManagementUseCaseData (36+ abbreviation mappings)
+                         nodeManagementUseCaseData (36+ abbreviation mappings),
+                         UseCaseFunctionSets mapping for context filtering
                        - subscriptions.go: subscription & binding lifecycle
                          tracking with staleness detection
                        - metrics.go: heartbeat accuracy metrics (jitter
@@ -126,8 +131,14 @@ internal/mdns/         mDNS device discovery
 
 web/                   Frontend assets (embedded via embed.FS)
                        - templates/: Go HTML templates (layout, index, trace,
-                         charts, intelligence, discovery)
-                       - static/css/: dark theme CSS with visualization styles
+                         charts, intelligence, discovery, about)
+                       - static/css/: "Oscillograph" theme CSS with dark/light
+                         toggle (dark default, "Blueprint" light theme via
+                         [data-theme="light"]), self-hosted Space Grotesk +
+                         JetBrains Mono fonts, CRT noise overlay, oscilloscope
+                         grid pattern, amber glow accents, animations
+                       - static/fonts/: Space Grotesk (variable, WOFF2) and
+                         JetBrains Mono (variable, WOFF2) self-hosted fonts
                        - static/js/common.js: shared utilities (CMD_COLORS, etc.)
                        - static/js/app.js: main UI logic (capture mode selector,
                          typed WS events, overview registry)
@@ -176,7 +187,16 @@ Browser → GET /api/traces/{id}/messages?search=Measurement&cmdClassifier=read&
   → Click message → GET /api/traces/{id}/messages/{mid}
   → Detail panel: decoded JSON, raw hex, headers, related messages
   → GET /api/traces/{id}/messages/{mid}/related
-  → Correlation by msgCounter/msgCounterRef
+  → Direct correlation: latency, relationship type, result status
+  → GET /api/traces/{id}/messages/{mid}/conversation
+  → Conversation grouping: all SPINE data msgs for same device pair + function set
+  → Selecting a message highlights correlated rows (teal border) via /related data
+  → GET /api/traces/{id}/orphaned-requests
+  → IDs of data messages with msgCounter but no matching msgCounterRef
+  → Frontend marks orphaned rows with red dot, detail panel shows warning banner
+  → GET /api/traces/{id}/usecase-context
+  → Detected use cases with associated devices and SPINE function sets
+  → Frontend dropdown filters message table by use case context
 ```
 
 ### Device Discovery
@@ -200,11 +220,12 @@ GET /api/traces/{id}/connections
 ### Time Series Extraction
 ```
 GET /api/traces/{id}/timeseries?type=measurement|loadcontrol|setpoint
-  → Resolve type to ExtractionDescriptor (cmdKey, dataArrayKey, idField, classifiers)
+  → Resolve type to ExtractionDescriptor (cmdKey, dataArrayKey, idField, classifiers, activeField)
   → Query messages by functionSet + cmdClassifier
   → extractGenericData: parse SPINE payload → data items with ScaledNumber conversion
-  → extractGenericSeries: group by ID, enrich labels from descriptions
-  → Response: { type, series: [{ id, label, dataPoints: [{timestamp, value}] }] }
+    + optional boolean active-state extraction (isLimitActive / isSetpointActive)
+  → extractGenericSeries: group by ID, enrich labels from descriptions, propagate isActive
+  → Response: { type, series: [{ id, label, dataPoints: [{timestamp, value, isActive?}] }] }
 
 GET /api/traces/{id}/charts/{cid}/data
   → Load ChartDefinition from chart_definitions table
@@ -273,7 +294,7 @@ POST /api/mdns/start
 | Chart rendering | Chart.js v4 (vendored) | Lightweight, interactive charts; time axis support built-in |
 | Vendored JS libs | No CDN, minified files in repo | Offline-capable, no external dependencies at runtime |
 | Viz page layout | Separate pages per visualization | Avoids overloading trace page; each loads only needed JS |
-| Timeseries extraction | Generic ExtractionDescriptor | Parameterized by cmdKey/dataArrayKey/idField; supports any SPINE function set with ScaledNumber values |
+| Timeseries extraction | Generic ExtractionDescriptor | Parameterized by cmdKey/dataArrayKey/idField/activeField; supports any SPINE function set with ScaledNumber values; optional active-state boolean propagated to frontend for dashed-line rendering |
 | Chart definitions | SQLite table with JSON sources | Persist user-created charts; built-in presets seeded on migration; flexible source configuration |
 | Source interface | Pluggable capture sources | Decouples engine from UDP; enables log tail, future WebSocket proxy, PCAP |
 | Log tail polling | 100ms time.Ticker, no fsnotify | Avoids new dependency; portable across OS; simple and reliable |

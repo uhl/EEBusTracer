@@ -231,6 +231,7 @@ func (s *Server) handleChartData(w http.ResponseWriter, r *http.Request) {
 			DataArrayKey: src.DataArrayKey,
 			IDField:      src.IDField,
 			Classifiers:  src.Classifiers,
+			ActiveField:  activeFieldForFunctionSet(src.FunctionSet),
 		}
 
 		// Build labels
@@ -289,4 +290,17 @@ func (s *Server) handleChartData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// activeFieldForFunctionSet returns the SPINE boolean field name that indicates
+// whether a limit or setpoint is active, or "" if not applicable.
+func activeFieldForFunctionSet(functionSet string) string {
+	switch functionSet {
+	case "LoadControlLimitListData":
+		return "isLimitActive"
+	case "SetpointListData":
+		return "isSetpointActive"
+	default:
+		return ""
+	}
 }

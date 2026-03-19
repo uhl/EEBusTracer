@@ -106,6 +106,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Message correlation
 	mux.HandleFunc("GET /api/traces/{id}/messages/{mid}/related", s.handleRelatedMessages)
+	mux.HandleFunc("GET /api/traces/{id}/messages/{mid}/conversation", s.handleConversation)
+	mux.HandleFunc("GET /api/traces/{id}/orphaned-requests", s.handleOrphanedRequests)
+	mux.HandleFunc("GET /api/traces/{id}/usecase-context", s.handleUseCaseContext)
 
 	// Timeseries & description APIs
 	mux.HandleFunc("GET /api/traces/{id}/timeseries", s.handleTimeseries)
