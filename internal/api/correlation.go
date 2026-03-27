@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -200,7 +199,7 @@ func extractResultStatus(spinePayload json.RawMessage) string {
 	if len(spinePayload) == 0 {
 		return ""
 	}
-	cmds := extractCmdsLocal(spinePayload)
+	cmds, _ := extractCmdArray(spinePayload)
 	for _, cmd := range cmds {
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(cmd, &m); err != nil {
@@ -224,34 +223,3 @@ func extractResultStatus(spinePayload json.RawMessage) string {
 	return ""
 }
 
-// extractCmdsLocal extracts the cmd entries from a SPINE datagram payload.
-// This is a local copy of the function in internal/analysis to avoid cross-package dependency.
-func extractCmdsLocal(spinePayload json.RawMessage) []json.RawMessage {
-	var dg struct {
-		Datagram struct {
-			Payload struct {
-				Cmd []json.RawMessage `json:"cmd"`
-			} `json:"payload"`
-		} `json:"datagram"`
-	}
-	if err := json.Unmarshal(spinePayload, &dg); err == nil && len(dg.Datagram.Payload.Cmd) > 0 {
-		return dg.Datagram.Payload.Cmd
-	}
-
-	// Try with cmd as a single object
-	var dgSingle struct {
-		Datagram struct {
-			Payload struct {
-				Cmd json.RawMessage `json:"cmd"`
-			} `json:"payload"`
-		} `json:"datagram"`
-	}
-	if err := json.Unmarshal(spinePayload, &dgSingle); err == nil && len(dgSingle.Datagram.Payload.Cmd) > 0 {
-		trimmed := bytes.TrimSpace(dgSingle.Datagram.Payload.Cmd)
-		if len(trimmed) > 0 && trimmed[0] == '{' {
-			return []json.RawMessage{dgSingle.Datagram.Payload.Cmd}
-		}
-	}
-
-	return nil
-}

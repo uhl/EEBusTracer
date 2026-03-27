@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"runtime"
 	"runtime/debug"
-
-	"github.com/eebustracer/eebustracer/internal/store"
 )
 
 // TemplateRenderer handles template loading and rendering.
@@ -174,18 +172,6 @@ func (s *Server) handleTracePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messages, err := s.msgRepo.ListMessages(traceID, store.MessageFilter{Limit: 2000})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	totalMessages, err := s.msgRepo.CountMessages(traceID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	traces, err := s.traceRepo.ListTraces()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -193,13 +179,11 @@ func (s *Server) handleTracePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]interface{}{
-		"Trace":         trace,
-		"Traces":        traces,
-		"Messages":      messages,
-		"TotalMessages": totalMessages,
-		"Capturing":     s.engine.IsCapturing(),
-		"TraceID":       s.engine.TraceID(),
-		"Version":       s.version,
+		"Trace":     trace,
+		"Traces":    traces,
+		"Capturing": s.engine.IsCapturing(),
+		"TraceID":   s.engine.TraceID(),
+		"Version":   s.version,
 	}
 
 	if s.templates == nil {

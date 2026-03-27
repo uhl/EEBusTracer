@@ -8,6 +8,7 @@ import (
 
 	"github.com/eebustracer/eebustracer/internal/capture"
 	"github.com/eebustracer/eebustracer/internal/mdns"
+	"github.com/eebustracer/eebustracer/internal/model"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -43,7 +44,7 @@ func NewServer(
 	templates *TemplateRenderer,
 	logger *slog.Logger,
 ) *Server {
-	return &Server{
+	s := &Server{
 		traceRepo:    traceRepo,
 		msgRepo:      msgRepo,
 		deviceRepo:   deviceRepo,
@@ -60,6 +61,13 @@ func NewServer(
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
+
+	// Register the WebSocket broadcast callback once — not per capture session.
+	engine.OnMessage(func(msg *model.Message) {
+		s.hub.BroadcastEvent("message", msg.ToSummary())
+	})
+
+	return s
 }
 
 // Handler returns the HTTP handler with all routes registered.
@@ -74,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/traces/{id}", s.handleDeleteTrace)
 
 	mux.HandleFunc("GET /api/traces/{id}/messages", s.handleListMessages)
+	mux.HandleFunc("GET /api/traces/{id}/messages/summaries", s.handleListMessageSummaries)
 	mux.HandleFunc("GET /api/traces/{id}/messages/{mid}", s.handleGetMessage)
 
 	mux.HandleFunc("GET /api/capture/status", s.handleCaptureStatus)
@@ -129,6 +138,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/traces/{id}/bindings", s.handleListBindings)
 	mux.HandleFunc("GET /api/traces/{id}/metrics", s.handleMetrics)
 	mux.HandleFunc("GET /api/traces/{id}/metrics/export", s.handleMetricsExport)
+	mux.HandleFunc("GET /api/traces/{id}/depgraph", s.handleDependencyGraph)
+	mux.HandleFunc("GET /api/traces/{id}/writetracking", s.handleWriteTracking)
+	mux.HandleFunc("GET /api/traces/{id}/lifecycle", s.handleLifecycle)
 
 	// mDNS discovery
 	mux.HandleFunc("GET /api/mdns/devices", s.handleMDNSDevices)

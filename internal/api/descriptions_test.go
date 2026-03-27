@@ -402,6 +402,94 @@ func TestAPI_Descriptions_NotFound(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestLoadDeviceConfigDescs(t *testing.T) {
+	_, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+
+	msgs := []*model.Message{
+		// DeviceConfigurationKeyValueDescriptionListData — maps keyId → keyName/valueType/unit
+		{
+			TraceID: trace.ID, SequenceNum: 1, Timestamp: now,
+			ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply",
+			FunctionSet: "DeviceConfigurationKeyValueDescriptionListData",
+			SpinePayload: json.RawMessage(`{
+				"datagram": {"payload": {"cmd": [{"deviceConfigurationKeyValueDescriptionListData": {
+					"deviceConfigurationKeyValueDescriptionData": [
+						{"keyId": 0, "keyName": "communicationsStandard", "valueType": "string"},
+						{"keyId": 1, "keyName": "asymmetricChargingSupported", "valueType": "boolean"},
+						{"keyId": 2, "keyName": "failsafeConsumptionActivePowerLimit", "valueType": "scaledNumber", "unit": "W"},
+						{"keyId": 3, "keyName": "failsafeDurationMinimum", "valueType": "duration", "unit": "ns"}
+					]
+				}}]}}
+			}`),
+		},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	logger := testLogger()
+	srv := &Server{msgRepo: msgRepo, logger: logger}
+	ctx := loadDescriptionContext(srv, trace.ID)
+
+	if len(ctx.KeyValues) != 4 {
+		t.Fatalf("expected 4 key values, got %d", len(ctx.KeyValues))
+	}
+
+	kv0, ok := ctx.KeyValues["0"]
+	if !ok {
+		t.Fatal("key 0 not found")
+	}
+	if kv0.KeyName != "communicationsStandard" {
+		t.Errorf("kv0 keyName = %q, want %q", kv0.KeyName, "communicationsStandard")
+	}
+	if kv0.ValueType != "string" {
+		t.Errorf("kv0 valueType = %q, want %q", kv0.ValueType, "string")
+	}
+
+	kv2, ok := ctx.KeyValues["2"]
+	if !ok {
+		t.Fatal("key 2 not found")
+	}
+	if kv2.KeyName != "failsafeConsumptionActivePowerLimit" {
+		t.Errorf("kv2 keyName = %q, want %q", kv2.KeyName, "failsafeConsumptionActivePowerLimit")
+	}
+	if kv2.Unit != "W" {
+		t.Errorf("kv2 unit = %q, want %q", kv2.Unit, "W")
+	}
+	if kv2.ValueType != "scaledNumber" {
+		t.Errorf("kv2 valueType = %q, want %q", kv2.ValueType, "scaledNumber")
+	}
+
+	kv3, ok := ctx.KeyValues["3"]
+	if !ok {
+		t.Fatal("key 3 not found")
+	}
+	if kv3.ValueType != "duration" {
+		t.Errorf("kv3 valueType = %q, want %q", kv3.ValueType, "duration")
+	}
+}
+
+func TestLoadDeviceConfigDescs_EmptyTrace(t *testing.T) {
+	_, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "empty", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	logger := testLogger()
+	srv := &Server{msgRepo: store.NewMessageRepo(db), logger: logger}
+	ctx := loadDescriptionContext(srv, trace.ID)
+
+	if len(ctx.KeyValues) != 0 {
+		t.Errorf("expected 0 key values, got %d", len(ctx.KeyValues))
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

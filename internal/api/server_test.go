@@ -800,6 +800,77 @@ func TestAPI_AboutPage(t *testing.T) {
 	}
 }
 
+func TestAPI_MessageSummaries(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "MeasurementListData", DeviceSource: "devA", DeviceDest: "devB"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", FunctionSet: "MeasurementListData", DeviceSource: "devB", DeviceDest: "devA"},
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "LoadControlLimitListData", DeviceSource: "devA", DeviceDest: "devB"},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	t.Run("returns all summaries", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/messages/summaries")
+		if err != nil {
+			t.Fatalf("GET summaries failed: %v", err)
+		}
+		if resp.StatusCode != 200 {
+			t.Errorf("status = %d, want 200", resp.StatusCode)
+		}
+		var summaries []model.MessageSummary
+		json.NewDecoder(resp.Body).Decode(&summaries)
+		resp.Body.Close()
+		if len(summaries) != 3 {
+			t.Errorf("got %d summaries, want 3", len(summaries))
+		}
+		// Verify summary fields
+		if len(summaries) > 0 {
+			s := summaries[0]
+			if s.SequenceNum != 1 {
+				t.Errorf("SequenceNum = %d, want 1", s.SequenceNum)
+			}
+			if s.DeviceSource != "devA" {
+				t.Errorf("DeviceSource = %q, want %q", s.DeviceSource, "devA")
+			}
+		}
+	})
+
+	t.Run("filter by cmdClassifier", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/messages/summaries?cmdClassifier=read")
+		if err != nil {
+			t.Fatalf("GET summaries failed: %v", err)
+		}
+		var summaries []model.MessageSummary
+		json.NewDecoder(resp.Body).Decode(&summaries)
+		resp.Body.Close()
+		if len(summaries) != 2 {
+			t.Errorf("got %d summaries, want 2", len(summaries))
+		}
+	})
+
+	t.Run("empty trace returns empty array", func(t *testing.T) {
+		trace2 := &model.Trace{Name: "empty", StartedAt: now, CreatedAt: now}
+		traceRepo.CreateTrace(trace2)
+		resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace2.ID, 10) + "/messages/summaries")
+		if err != nil {
+			t.Fatalf("GET summaries failed: %v", err)
+		}
+		var summaries []model.MessageSummary
+		json.NewDecoder(resp.Body).Decode(&summaries)
+		resp.Body.Close()
+		if summaries == nil || len(summaries) != 0 {
+			t.Errorf("expected empty array, got %v", summaries)
+		}
+	})
+}
+
 func TestAPI_MessagesSearch(t *testing.T) {
 	ts, db := setupTestServer(t)
 
@@ -1025,6 +1096,73 @@ func TestAPI_OrphanedRequests_Empty(t *testing.T) {
 	}
 }
 
+func TestAPI_MessagesTimeRangeFilter(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	base := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	msgs := []*model.Message{
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: base, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: base.Add(2 * time.Hour), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read"},
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: base.Add(4 * time.Hour), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read"},
+		{TraceID: trace.ID, SequenceNum: 4, Timestamp: base.Add(6 * time.Hour), ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read"},
+	}
+	msgRepo.InsertMessages(msgs)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantCount int
+	}{
+		{
+			name:      "both timeFrom and timeTo",
+			query:     "timeFrom=" + base.Add(1*time.Hour).Format(time.RFC3339) + "&timeTo=" + base.Add(5*time.Hour).Format(time.RFC3339),
+			wantCount: 2, // seq 2 (12:00) and seq 3 (14:00)
+		},
+		{
+			name:      "only timeFrom",
+			query:     "timeFrom=" + base.Add(3*time.Hour).Format(time.RFC3339),
+			wantCount: 2, // seq 3 (14:00) and seq 4 (16:00)
+		},
+		{
+			name:      "only timeTo",
+			query:     "timeTo=" + base.Add(3*time.Hour).Format(time.RFC3339),
+			wantCount: 2, // seq 1 (10:00) and seq 2 (12:00)
+		},
+		{
+			name:      "no time filter returns all",
+			query:     "",
+			wantCount: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/messages"
+			if tt.query != "" {
+				url += "?" + tt.query
+			}
+			resp, err := http.Get(url)
+			if err != nil {
+				t.Fatalf("GET messages failed: %v", err)
+			}
+			if resp.StatusCode != 200 {
+				t.Errorf("status = %d, want 200", resp.StatusCode)
+			}
+			var results []model.Message
+			json.NewDecoder(resp.Body).Decode(&results)
+			resp.Body.Close()
+			if len(results) != tt.wantCount {
+				t.Errorf("got %d messages, want %d", len(results), tt.wantCount)
+			}
+		})
+	}
+}
+
 func TestAPI_UseCaseContext(t *testing.T) {
 	ts, db := setupTestServer(t)
 
@@ -1083,5 +1221,196 @@ func TestAPI_UseCaseContext_Empty(t *testing.T) {
 
 	if len(result) != 0 {
 		t.Errorf("expected 0 use case contexts for empty trace, got %d", len(result))
+	}
+}
+
+func TestAPI_DependencyGraph_Empty(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	resp, err := http.Get(ts.URL + "/api/traces/1/depgraph")
+	if err != nil {
+		t.Fatalf("GET depgraph failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("GET depgraph status = %d, want 200", resp.StatusCode)
+	}
+
+	var tree struct {
+		Devices []map[string]interface{} `json:"devices"`
+		Edges   []map[string]interface{} `json:"edges"`
+	}
+	json.NewDecoder(resp.Body).Decode(&tree)
+	resp.Body.Close()
+
+	if tree.Devices == nil {
+		t.Error("expected non-nil devices")
+	}
+	if tree.Edges == nil {
+		t.Error("expected non-nil edges")
+	}
+	if len(tree.Devices) != 0 {
+		t.Errorf("expected 0 devices, got %d", len(tree.Devices))
+	}
+	if len(tree.Edges) != 0 {
+		t.Errorf("expected 0 edges, got %d", len(tree.Edges))
+	}
+}
+
+func TestAPI_DependencyGraph_DiscoveryNotifyUpdatesTree(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	msgRepo := store.NewMessageRepo(db)
+	now := time.Now()
+
+	// Initial discovery reply: EVSE has only one entity [1] with one feature
+	initialDiscovery := `{"datagram":{"payload":{"cmd":[{"nodeManagementDetailedDiscoveryData":{` +
+		`"entityInformation":[{"description":{"entityAddress":{"entity":[1]},"entityType":"EVSE"}}],` +
+		`"featureInformation":[{"description":{"featureAddress":{"entity":[1],"feature":1},"featureType":"LoadControlLimit","role":"server","supportedFunction":[{"function":"LoadControlLimitListData"}]}}]` +
+		`}}]}}}`
+	msg1 := &model.Message{
+		TraceID:       trace.ID,
+		SequenceNum:   1,
+		Timestamp:     now,
+		ShipMsgType:   model.ShipMsgTypeData,
+		FunctionSet:   "NodeManagementDetailedDiscoveryData",
+		CmdClassifier: "reply",
+		DeviceSource:  "d:_i:EVSE",
+		SpinePayload:  []byte(initialDiscovery),
+	}
+
+	// Later discovery notify: EV connected — partial update with ONLY the new EV entity
+	updatedDiscovery := `{"datagram":{"payload":{"cmd":[{"nodeManagementDetailedDiscoveryData":{` +
+		`"entityInformation":[` +
+		`{"description":{"entityAddress":{"entity":[1,1]},"entityType":"EV"}}` +
+		`],` +
+		`"featureInformation":[` +
+		`{"description":{"featureAddress":{"entity":[1,1],"feature":1},"featureType":"Measurement","role":"server","supportedFunction":[{"function":"MeasurementListData"}]}}` +
+		`]` +
+		`}}]}}}`
+	msg2 := &model.Message{
+		TraceID:       trace.ID,
+		SequenceNum:   2,
+		Timestamp:     now.Add(time.Second),
+		ShipMsgType:   model.ShipMsgTypeData,
+		FunctionSet:   "NodeManagementDetailedDiscoveryData",
+		CmdClassifier: "notify",
+		DeviceSource:  "d:_i:EVSE",
+		SpinePayload:  []byte(updatedDiscovery),
+	}
+	msgRepo.InsertMessages([]*model.Message{msg1, msg2})
+
+	resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/depgraph")
+	if err != nil {
+		t.Fatalf("GET depgraph failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET depgraph status = %d, want 200", resp.StatusCode)
+	}
+
+	var tree struct {
+		Devices []struct {
+			DeviceAddr string `json:"deviceAddr"`
+			ShortName  string `json:"shortName"`
+			Entities   []struct {
+				Address    string `json:"address"`
+				EntityType string `json:"entityType"`
+			} `json:"entities"`
+		} `json:"devices"`
+	}
+	json.NewDecoder(resp.Body).Decode(&tree)
+	resp.Body.Close()
+
+	if len(tree.Devices) != 1 {
+		t.Fatalf("expected 1 device, got %d", len(tree.Devices))
+	}
+
+	// The partial notify should have been merged with the initial reply — we should see 2 entities (EVSE + EV)
+	dev := tree.Devices[0]
+	if len(dev.Entities) != 2 {
+		t.Errorf("expected 2 entities (EVSE + EV after notify), got %d", len(dev.Entities))
+	}
+
+	entityTypes := map[string]bool{}
+	for _, e := range dev.Entities {
+		entityTypes[e.EntityType] = true
+	}
+	if !entityTypes["EVSE"] {
+		t.Error("expected EVSE entity")
+	}
+	if !entityTypes["EV"] {
+		t.Error("expected EV entity from discovery notify update")
+	}
+}
+
+func TestAPI_DependencyGraph_WithData(t *testing.T) {
+	ts, db := setupTestServer(t)
+
+	traceRepo := store.NewTraceRepo(db)
+	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+	traceRepo.CreateTrace(trace)
+
+	// Create a device
+	deviceRepo := store.NewDeviceRepo(db)
+	d := &model.Device{
+		TraceID:     trace.ID,
+		DeviceAddr:  "d:_i:19667_HEMS",
+		FirstSeenAt: time.Now(),
+		LastSeenAt:  time.Now(),
+	}
+	deviceRepo.UpsertDevice(d)
+
+	// Insert use case message
+	msgRepo := store.NewMessageRepo(db)
+	ucPayload := `{"datagram":{"payload":{"cmd":[{"nodeManagementUseCaseData":{"useCaseInformation":[{"actor":"CEM","useCaseSupport":[{"useCaseName":"limitationOfPowerConsumption","useCaseAvailable":true}]}]}}]}}}`
+	ucMsg := &model.Message{
+		TraceID:       trace.ID,
+		SequenceNum:   1,
+		Timestamp:     time.Now(),
+		ShipMsgType:   model.ShipMsgTypeData,
+		FunctionSet:   "NodeManagementUseCaseData",
+		CmdClassifier: "reply",
+		DeviceSource:  "d:_i:19667_HEMS",
+		SpinePayload:  []byte(ucPayload),
+	}
+	msgRepo.InsertMessage(ucMsg)
+
+	resp, err := http.Get(ts.URL + "/api/traces/1/depgraph")
+	if err != nil {
+		t.Fatalf("GET depgraph failed: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("GET depgraph status = %d, want 200", resp.StatusCode)
+	}
+
+	var tree struct {
+		Devices []map[string]interface{} `json:"devices"`
+		Edges   []map[string]interface{} `json:"edges"`
+	}
+	json.NewDecoder(resp.Body).Decode(&tree)
+	resp.Body.Close()
+
+	// Should have at least the HEMS device
+	if len(tree.Devices) < 1 {
+		t.Errorf("expected at least 1 device, got %d", len(tree.Devices))
+	}
+
+	// Verify we have the HEMS device with the correct short name
+	hasHEMS := false
+	for _, d := range tree.Devices {
+		if d["shortName"] == "HEMS" {
+			hasHEMS = true
+			break
+		}
+	}
+	if !hasHEMS {
+		t.Error("expected device with shortName HEMS")
 	}
 }

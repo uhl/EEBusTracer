@@ -60,13 +60,50 @@ func NewTCPSource(target string, p *parser.Parser, logger *slog.Logger) *TCPSour
 // Name returns "tcp".
 func (s *TCPSource) Name() string { return "tcp" }
 
+// dialWithRetry attempts to connect to the target with retries for transient
+// network errors (e.g. "no route to host" from stale ARP cache on macOS).
+func (s *TCPSource) dialWithRetry(ctx context.Context) (net.Conn, error) {
+	const maxRetries = 3
+	const dialTimeout = 10 * time.Second
+	backoff := time.Second
+
+	var lastErr error
+	for attempt := range maxRetries {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		conn, err := net.DialTimeout("tcp", s.target, dialTimeout)
+		if err == nil {
+			if attempt > 0 {
+				s.logger.Info("tcp: connected after retry", "attempt", attempt+1)
+			}
+			return conn, nil
+		}
+		lastErr = err
+		s.logger.Warn("tcp: dial failed, retrying",
+			"attempt", attempt+1,
+			"error", err,
+			"backoff", backoff,
+		)
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+	return nil, lastErr
+}
+
 // Run connects to the TCP log server and reads data until the context is
 // cancelled or the connection is closed. Instead of line-based scanning,
 // it reads raw chunks and splits on the [HH:MM:SS.mmm] timestamp pattern
 // to handle CNetLogServer's fixed-size binary buffers that may contain
 // multiple messages and arbitrary binary padding.
 func (s *TCPSource) Run(ctx context.Context, emit func(*model.Message)) error {
-	conn, err := net.Dial("tcp", s.target)
+	conn, err := s.dialWithRetry(ctx)
 	if err != nil {
 		return fmt.Errorf("connect to %s: %w", s.target, err)
 	}

@@ -11,10 +11,12 @@
     let autoScroll = true;
     var orphanedIds = new Set();
     var useCaseContextMap = {};
-
-    var PAGE_SIZE = 2000;
-    var currentOffset = 0;
-    var lastTotalCount = typeof window.TOTAL_MESSAGES !== 'undefined' ? window.TOTAL_MESSAGES : 0;
+    var vs = null; // VirtualScroll instance
+    var bookmarkSet = {}; // messageId -> {label, color}
+    var detailCache = {}; // LRU cache: msgId -> full message
+    var detailCacheKeys = [];
+    var DETAIL_CACHE_SIZE = 50;
+    var unfilteredCount = 0; // total messages without any filter
 
     // --- Capture Mode Selector ---
     const captureMode = document.getElementById('capture-mode');
@@ -247,8 +249,8 @@
         ws.onmessage = function(event) {
             const data = JSON.parse(event.data);
             if (data.type === 'message') {
-                if (matchesFilter(data.payload)) {
-                    appendMessageRow(data.payload);
+                if (vs && matchesFilter(data.payload)) {
+                    appendLiveMessage(data.payload);
                 }
                 updateStatusBar();
             } else if (data.type === 'mdns_device') {
@@ -309,6 +311,22 @@
                 setCaptureCompact(true);
             });
 
+        // Initialize VirtualScroll
+        var vsContainer = document.querySelector('.message-table-container');
+        var vsTbody = document.getElementById('message-tbody');
+        if (vsContainer && vsTbody) {
+            vs = new VirtualScroll({
+                container: vsContainer,
+                tbody: vsTbody,
+                rowHeight: 24,
+                overscan: 10,
+                renderRow: buildRowHTML,
+                onSelect: function(item) {
+                    if (item) showDetail(item.traceId, item.id);
+                }
+            });
+        }
+
         // Load sidebar data
         loadBookmarks();
         loadDevicePanel();
@@ -319,11 +337,7 @@
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 orphanedIds = new Set(data.ids || []);
-                // Mark existing rows
-                document.querySelectorAll('.msg-row').forEach(function(row) {
-                    var id = parseInt(row.dataset.id);
-                    if (orphanedIds.has(id)) row.classList.add('msg-orphan');
-                });
+                if (vs) vs.refresh();
             })
             .catch(function() {});
 
@@ -335,42 +349,69 @@
             })
             .catch(function() {});
 
+        // Initial fetch of message summaries
+        fetchSummaries();
+
     }
 
     // --- Message Table ---
-    function appendMessageRow(msg) {
-        const tbody = document.getElementById('message-tbody');
-        if (!tbody) return;
 
-        const tr = document.createElement('tr');
-        tr.className = 'msg-row' + (orphanedIds.has(msg.id) ? ' msg-orphan' : '');
-        tr.dataset.id = msg.id;
-        tr.onclick = function() { showDetail(msg.traceId, msg.id); };
+    // Fetch all message summaries for the current trace with active filters.
+    async function fetchSummaries() {
+        if (typeof window.TRACE_ID === 'undefined' || !vs) return;
+        var params = buildFilterParams();
+        var isFiltered = params.toString() !== '';
 
-        const ts = new Date(msg.timestamp);
-        const timeStr = ts.toTimeString().substring(0, 8) + '.' + String(ts.getMilliseconds()).padStart(3, '0');
+        // Show loading state
+        var tbody = document.getElementById('message-tbody');
+        if (tbody && vs.data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-secondary)">Loading messages...</td></tr>';
+        }
 
-        var arrow = msg.direction === 'incoming' ? '\u2190' : '\u2192';
-        var cls = msg.cmdClassifier || '';
-        tr.innerHTML =
-            '<td class="col-bookmark" id="bm-' + msg.id + '"></td>' +
-            '<td class="col-seq">' + (msg.sequenceNum || '') + '</td>' +
-            '<td>' + timeStr + '</td>' +
-            '<td class="col-comm">' + (msg.deviceSource || '') + ' <span class="dir-arrow dir-' + msg.direction + '">' + arrow + '</span> ' + (msg.deviceDest || '') + '</td>' +
-            '<td class="cmd-' + cls + '">' + cls + '</td>' +
-            '<td>' + (msg.functionSet || msg.shipMsgType || '') + '</td>';
+        try {
+            var resp = await fetch('/api/traces/' + window.TRACE_ID + '/messages/summaries?' + params.toString());
+            var summaries = await resp.json();
+            vs.setData(summaries || []);
+            // Track unfiltered total for the filter indicator
+            if (!isFiltered) {
+                unfilteredCount = vs.data.length;
+            }
+            updateStatusBar();
 
-        tbody.appendChild(tr);
+            // Show empty state if no messages match
+            if (vs.data.length === 0 && tbody) {
+                var emptyMsg = isFiltered ? 'No messages match your filter' : 'No messages in this trace';
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-secondary)">' + emptyMsg + '</td></tr>';
+            }
+        } catch (e) {
+            console.error('Fetch summaries failed:', e);
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--danger)">Failed to load messages</td></tr>';
+            }
+        }
+    }
 
-        // Animate new row entrance
-        tr.classList.add('msg-row-enter');
-        setTimeout(function() { tr.classList.remove('msg-row-enter'); }, 400);
+    // Append a live WebSocket message as a summary into the virtual scroll.
+    function appendLiveMessage(msg) {
+        if (!vs) return;
+        // The WebSocket payload already has the summary fields we need
+        var summary = {
+            id: msg.id,
+            traceId: msg.traceId,
+            sequenceNum: msg.sequenceNum,
+            timestamp: msg.timestamp,
+            direction: msg.direction,
+            shipMsgType: msg.shipMsgType,
+            cmdClassifier: msg.cmdClassifier,
+            functionSet: msg.functionSet,
+            msgCounter: msg.msgCounter,
+            deviceSource: msg.deviceSource,
+            deviceDest: msg.deviceDest
+        };
+        vs.appendItem(summary);
 
         if (autoScroll) {
-            const container = tbody.closest('.message-table-container');
-            if (container) {
-                container.scrollTop = container.scrollHeight;
-            }
+            vs.scrollToIndex(vs.data.length - 1);
         } else {
             var btn = document.getElementById('auto-scroll-btn');
             if (btn) btn.classList.add('has-new');
@@ -378,37 +419,54 @@
     }
 
     // --- Message Detail ---
+
+    // LRU cache helpers for full message details
+    function cacheDetailPut(msgId, msg) {
+        if (detailCache[msgId]) {
+            // Move to end
+            detailCacheKeys = detailCacheKeys.filter(function(k) { return k !== msgId; });
+        }
+        detailCacheKeys.push(msgId);
+        detailCache[msgId] = msg;
+        while (detailCacheKeys.length > DETAIL_CACHE_SIZE) {
+            var evict = detailCacheKeys.shift();
+            delete detailCache[evict];
+        }
+    }
+
+    function cacheDetailGet(msgId) {
+        return detailCache[msgId] || null;
+    }
+
     window.showDetail = async function(traceId, msgId) {
-        document.querySelectorAll('.msg-row').forEach(r => r.classList.remove('selected'));
-        const row = document.querySelector('.msg-row[data-id="' + msgId + '"]');
-        if (row) row.classList.add('selected');
         selectedMsgId = msgId;
 
-        // Clear previous correlation highlights
-        document.querySelectorAll('.msg-row.msg-correlated').forEach(r => r.classList.remove('msg-correlated'));
-
-        // Fetch related and highlight correlated rows
-        fetch('/api/traces/' + traceId + '/messages/' + msgId + '/related')
-            .then(function(r) { return r.json(); })
-            .then(function(related) {
-                for (var i = 0; i < related.length; i++) {
-                    var relRow = document.querySelector('.msg-row[data-id="' + related[i].message.id + '"]');
-                    if (relRow && relRow !== row) relRow.classList.add('msg-correlated');
+        // Update virtual scroll selection
+        if (vs) {
+            for (var i = 0; i < vs.data.length; i++) {
+                if (vs.data[i].id === msgId) {
+                    vs.setSelectedIndex(i);
+                    break;
                 }
-            })
-            .catch(function() {});
+            }
+        }
+
+        const content = document.getElementById('detail-content');
+        content.innerHTML = '<div class="empty-state">Loading...</div>';
+
+        // Show detail actions
+        const actions = document.getElementById('detail-actions');
+        if (actions) actions.style.display = 'flex';
 
         try {
-            const resp = await fetch('/api/traces/' + traceId + '/messages/' + msgId);
-            const msg = await resp.json();
+            // Check LRU cache first
+            var msg = cacheDetailGet(msgId);
+            if (!msg) {
+                var resp = await fetch('/api/traces/' + traceId + '/messages/' + msgId);
+                msg = await resp.json();
+                cacheDetailPut(msgId, msg);
+            }
             currentMsg = msg;
-            const content = document.getElementById('detail-content');
-
-            content.innerHTML = '<div class="empty-state">Loading...</div>';
-
-            // Show detail actions
-            const actions = document.getElementById('detail-actions');
-            if (actions) actions.style.display = 'flex';
 
             setupTabs(msg);
             // Reset active tab highlight to Overview
@@ -498,6 +556,13 @@ function categoryAbbr(cat) {
         return addr;
     }
 
+    function formatAddress(entity, feature) {
+        var parts = [];
+        if (entity) parts.push('Entity ' + entity);
+        if (feature) parts.push('Feature ' + feature);
+        return parts.length > 0 ? parts.join(', ') : '?';
+    }
+
     function overviewHeader(msg) {
         var dir = msg.direction || '';
         var arrow = dir === 'incoming' ? '\u2190 IN' : '\u2192 OUT';
@@ -517,6 +582,11 @@ function categoryAbbr(cat) {
         }
         if (fs) html += '<div class="overview-kv"><span class="overview-label">Function</span><span>' + escapeHtml(fs) + '</span></div>';
         if (src || dst) html += '<div class="overview-kv"><span class="overview-label">Path</span><span>' + escapeHtml(src) + ' \u2192 ' + escapeHtml(dst) + '</span></div>';
+        if (msg.entitySource || msg.entityDest || msg.featureSource || msg.featureDest) {
+            var addrSrc = formatAddress(msg.entitySource, msg.featureSource);
+            var addrDst = formatAddress(msg.entityDest, msg.featureDest);
+            html += '<div class="overview-kv"><span class="overview-label">Addressing</span><span>' + escapeHtml(addrSrc) + ' \u2192 ' + escapeHtml(addrDst) + '</span></div>';
+        }
         if (ctr) html += '<div class="overview-kv"><span class="overview-label">MsgCounter</span><span>' + escapeHtml(ctr) + '</span></div>';
         if (ref) html += '<div class="overview-kv"><span class="overview-label">MsgCounterRef</span><span>' + escapeHtml(ref) + '</span></div>';
         html += '</div>';
@@ -970,6 +1040,67 @@ function categoryAbbr(cat) {
         return overviewTable('Setpoint Descriptions', ['ID', 'Type', 'Unit'], rows);
     }
 
+    function fmtDeviceConfigValue(val) {
+        if (!val) return '-';
+        if (val.boolean !== undefined && val.boolean !== null) return String(val.boolean);
+        if (val.string !== undefined && val.string !== null) return String(val.string);
+        if (val.scaledNumber !== undefined && val.scaledNumber !== null) return fmtScaled(val.scaledNumber);
+        if (val.integer !== undefined && val.integer !== null) return String(val.integer);
+        if (val.duration !== undefined && val.duration !== null) return String(val.duration);
+        if (val.date !== undefined && val.date !== null) return String(val.date);
+        if (val.dateTime !== undefined && val.dateTime !== null) return String(val.dateTime);
+        if (val.time !== undefined && val.time !== null) return String(val.time);
+        return '-';
+    }
+
+    function renderDeviceConfigOverview(cmds, descs) {
+        var rows = [];
+        for (var i = 0; i < cmds.length; i++) {
+            var cmd = cmds[i];
+            if (!cmd.deviceConfigurationKeyValueListData) continue;
+            var data = cmd.deviceConfigurationKeyValueListData.deviceConfigurationKeyValueData || [];
+            for (var j = 0; j < data.length; j++) {
+                var d = data[j];
+                if (d.keyId === undefined || d.keyId === null) continue;
+                var id = String(d.keyId);
+                var desc = (descs && descs.keyValues && descs.keyValues[id]) || {};
+                var unit = desc.unit || '';
+                var valStr = d.value ? fmtDeviceConfigValue(d.value) : '-';
+                if (unit && valStr !== '-') valStr += ' ' + unit;
+                var changeable = d.isValueChangeable;
+                rows.push({
+                    Key: desc.keyName || ('Key ' + id),
+                    Value: valStr,
+                    _changeableRaw: changeable,
+                    Changeable: changeable === true
+                });
+            }
+        }
+        return overviewTable('Device Configuration', ['Key', 'Value', 'Changeable'], rows, {
+            cellClass: {'Changeable': function(row) { return row._changeableRaw === undefined || row._changeableRaw === null ? '' : row.Changeable ? 'enriched-active' : 'enriched-inactive'; }},
+            cellFormat: {'Changeable': function(row) { return row._changeableRaw === undefined || row._changeableRaw === null ? '-' : row.Changeable ? '\u2713' : '\u2717'; }}
+        });
+    }
+
+    function renderDeviceConfigDescOverview(cmds) {
+        var rows = [];
+        for (var i = 0; i < cmds.length; i++) {
+            var cmd = cmds[i];
+            if (!cmd.deviceConfigurationKeyValueDescriptionListData) continue;
+            var data = cmd.deviceConfigurationKeyValueDescriptionListData.deviceConfigurationKeyValueDescriptionData || [];
+            for (var j = 0; j < data.length; j++) {
+                var d = data[j];
+                rows.push({
+                    ID: d.keyId !== undefined ? String(d.keyId) : '-',
+                    Name: d.keyName || '',
+                    Type: d.valueType || '',
+                    Unit: d.unit || ''
+                });
+            }
+        }
+        return overviewTable('Key Value Descriptions', ['ID', 'Name', 'Type', 'Unit'], rows);
+    }
+
     function renderDiscoveryOverview(cmds) {
         var html = '';
         for (var i = 0; i < cmds.length; i++) {
@@ -1112,6 +1243,8 @@ function categoryAbbr(cat) {
     registerOverview('LoadControlLimitDescriptionListData', { render: renderLimitDescOverview });
     registerOverview('ElectricalConnectionParameterDescriptionListData', { render: renderElecParamDescOverview });
     registerOverview('SetpointDescriptionListData', { render: renderSetpointDescOverview });
+    registerOverview('DeviceConfigurationKeyValueListData', { needsDescs: true, render: renderDeviceConfigOverview });
+    registerOverview('DeviceConfigurationKeyValueDescriptionListData', { render: renderDeviceConfigDescOverview });
     registerOverview('NodeManagementDetailedDiscoveryData', { render: renderDiscoveryOverview });
     registerOverview('NodeManagementUseCaseData',   { render: renderUseCaseOverview });
 
@@ -1376,6 +1509,10 @@ function categoryAbbr(cat) {
         var el = document.getElementById(id);
         if (el) el.addEventListener('change', function() { applyFilter(); });
     });
+    ['filter-time-from', 'filter-time-to'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('change', function() { applyFilter(); });
+    });
 
     if (btnClearFilter) {
         btnClearFilter.addEventListener('click', clearFilter);
@@ -1397,6 +1534,21 @@ function categoryAbbr(cat) {
         }
     }
 
+    function buildTimeRangeISO(timeStr, isEnd) {
+        if (!window.TRACE_STARTED_AT) return null;
+        var traceDate = window.TRACE_STARTED_AT.substring(0, 10); // "YYYY-MM-DD"
+        var dt = new Date(traceDate + 'T' + timeStr);
+        if (isNaN(dt.getTime())) return null;
+        if (isEnd) {
+            var fromEl = document.getElementById('filter-time-from');
+            if (fromEl && fromEl.value && timeStr < fromEl.value) {
+                // Overnight range: bump to next day
+                dt.setDate(dt.getDate() + 1);
+            }
+        }
+        return dt.toISOString();
+    }
+
     function buildFilterParams() {
         const params = new URLSearchParams();
         const search = document.getElementById('filter-search');
@@ -1415,6 +1567,18 @@ function categoryAbbr(cat) {
                 }
             }
         }
+
+        var timeFrom = document.getElementById('filter-time-from');
+        var timeTo = document.getElementById('filter-time-to');
+        if (timeFrom && timeFrom.value) {
+            var iso = buildTimeRangeISO(timeFrom.value, false);
+            if (iso) params.set('timeFrom', iso);
+        }
+        if (timeTo && timeTo.value) {
+            var iso = buildTimeRangeISO(timeTo.value, true);
+            if (iso) params.set('timeTo', iso);
+        }
+
         return params;
     }
 
@@ -1424,8 +1588,10 @@ function categoryAbbr(cat) {
         var arrow = msg.direction === 'incoming' ? '\u2190' : '\u2192';
         var cls = msg.cmdClassifier || '';
         var rowClass = 'msg-row' + (orphanedIds.has(msg.id) ? ' msg-orphan' : '');
-        return '<tr class="' + rowClass + '" data-id="' + msg.id + '" onclick="showDetail(' + msg.traceId + ',' + msg.id + ')">' +
-            '<td class="col-bookmark" id="bm-' + msg.id + '"></td>' +
+        var bm = bookmarkSet[msg.id];
+        var bmHtml = bm ? '<span class="bookmark-badge" style="background:' + escapeHtml(bm.color) + '"></span>' : '';
+        return '<tr class="' + rowClass + '" data-id="' + msg.id + '">' +
+            '<td class="col-bookmark">' + bmHtml + '</td>' +
             '<td class="col-seq">' + (msg.sequenceNum || '') + '</td>' +
             '<td>' + timeStr + '</td>' +
             '<td class="col-comm">' + (msg.deviceSource || '') + ' <span class="dir-arrow dir-' + msg.direction + '">' + arrow + '</span> ' + (msg.deviceDest || '') + '</td>' +
@@ -1435,37 +1601,15 @@ function categoryAbbr(cat) {
     }
 
     async function applyFilter() {
-        if (typeof window.TRACE_ID === 'undefined') return;
-
-        currentOffset = 0;
-        const params = buildFilterParams();
-        params.set('limit', String(PAGE_SIZE));
-        params.set('offset', '0');
-        try {
-            const resp = await fetch('/api/traces/' + window.TRACE_ID + '/messages?' + params.toString());
-            const messages = await resp.json();
-            var totalCount = parseInt(resp.headers.get('X-Total-Count')) || 0;
-            var unfilteredCount = parseInt(resp.headers.get('X-Unfiltered-Count')) || totalCount;
-            lastTotalCount = totalCount;
-            const tbody = document.getElementById('message-tbody');
-            if (tbody) {
-                var html = '';
-                for (var i = 0; i < messages.length; i++) {
-                    html += buildRowHTML(messages[i]);
-                }
-                tbody.innerHTML = html;
-            }
-            currentOffset = messages.length;
-            updateFilterIndicator(totalCount, unfilteredCount);
-            updateLoadMoreButton(messages.length, totalCount);
-            updateStatusBar();
-        } catch (e) {
-            console.error('Filter failed:', e);
-        }
+        if (typeof window.TRACE_ID === 'undefined' || !vs) return;
+        await fetchSummaries();
+        var params = buildFilterParams();
+        var isFiltered = params.toString() !== '';
+        updateFilterIndicator(vs.data.length, isFiltered ? unfilteredCount : vs.data.length);
     }
 
     function clearFilter() {
-        const inputs = ['filter-search'];
+        const inputs = ['filter-search', 'filter-time-from', 'filter-time-to'];
         inputs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = '';
@@ -1475,7 +1619,6 @@ function categoryAbbr(cat) {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
-        currentOffset = 0;
         var toolbar = document.getElementById('toolbar');
         if (toolbar) toolbar.classList.remove('filter-active');
         applyFilter();
@@ -1501,61 +1644,6 @@ function categoryAbbr(cat) {
             }
         }
     }
-
-    // --- Load More Button ---
-    function updateLoadMoreButton(displayed, total) {
-        var btn = document.getElementById('load-more-btn');
-        if (!btn) return;
-        var remaining = total - displayed;
-        if (remaining > 0) {
-            btn.style.display = '';
-            btn.textContent = 'Load more (' + remaining + ' remaining)';
-        } else {
-            btn.style.display = 'none';
-        }
-    }
-
-    (function() {
-        var btn = document.getElementById('load-more-btn');
-        if (!btn) return;
-        btn.addEventListener('click', async function() {
-            if (typeof window.TRACE_ID === 'undefined') return;
-            var params = buildFilterParams();
-            params.set('limit', String(PAGE_SIZE));
-            params.set('offset', String(currentOffset));
-            try {
-                var resp = await fetch('/api/traces/' + window.TRACE_ID + '/messages?' + params.toString());
-                var messages = await resp.json();
-                var totalCount = parseInt(resp.headers.get('X-Total-Count')) || lastTotalCount;
-                lastTotalCount = totalCount;
-                var tbody = document.getElementById('message-tbody');
-                if (tbody && messages.length > 0) {
-                    var html = '';
-                    for (var i = 0; i < messages.length; i++) {
-                        html += buildRowHTML(messages[i]);
-                    }
-                    tbody.insertAdjacentHTML('beforeend', html);
-                }
-                currentOffset += messages.length;
-                updateLoadMoreButton(currentOffset, totalCount);
-                updateStatusBar();
-            } catch (e) {
-                console.error('Load more failed:', e);
-            }
-        });
-    })();
-
-    // Initial load-more button state for server-rendered pages
-    (function() {
-        if (typeof window.TRACE_ID === 'undefined') return;
-        var tbody = document.getElementById('message-tbody');
-        var total = typeof window.TOTAL_MESSAGES !== 'undefined' ? window.TOTAL_MESSAGES : 0;
-        if (tbody && total > 0) {
-            var displayed = tbody.children.length;
-            currentOffset = displayed;
-            updateLoadMoreButton(displayed, total);
-        }
-    })();
 
     // --- Filter Presets (gear-icon dropdown) ---
     const btnPresets = document.getElementById('btn-presets');
@@ -1684,22 +1772,20 @@ function categoryAbbr(cat) {
 
     // --- Keyboard Shortcuts ---
     function navigateMessages(direction) {
-        var rows = Array.from(document.querySelectorAll('.msg-row'));
-        if (rows.length === 0) return;
-        var current = document.querySelector('.msg-row.selected');
-        var currentIndex = current ? rows.indexOf(current) : -1;
+        if (!vs || vs.data.length === 0) return;
+        var currentIndex = vs.getSelectedIndex();
         var newIndex;
         if (currentIndex === -1) {
-            newIndex = direction === 1 ? 0 : rows.length - 1;
+            newIndex = direction === 1 ? 0 : vs.data.length - 1;
         } else {
             newIndex = currentIndex + direction;
         }
         if (newIndex < 0) newIndex = 0;
-        if (newIndex >= rows.length) newIndex = rows.length - 1;
-        var newRow = rows[newIndex];
-        var msgId = parseInt(newRow.dataset.id);
-        showDetail(window.TRACE_ID, msgId);
-        newRow.scrollIntoView({ block: 'nearest' });
+        if (newIndex >= vs.data.length) newIndex = vs.data.length - 1;
+        vs.setSelectedIndex(newIndex);
+        vs.scrollToIndex(newIndex);
+        var item = vs.getItem(newIndex);
+        if (item) showDetail(item.traceId, item.id);
     }
 
     function openJumpDialog() {
@@ -1716,17 +1802,14 @@ function categoryAbbr(cat) {
                 input.removeEventListener('keydown', onKey);
                 var val = input.value.trim();
                 overlay.style.display = 'none';
-                if (!val) return;
-                var rows = Array.from(document.querySelectorAll('.msg-row'));
-                for (var i = 0; i < rows.length; i++) {
-                    var cells = rows[i].querySelectorAll('td');
-                    // Column 1 (after bookmark) = sequence number, last column = msgCounter
-                    var seqText = cells[1] ? cells[1].textContent.trim() : '';
-                    var ctrText = cells[cells.length - 1] ? cells[cells.length - 1].textContent.trim() : '';
-                    if (seqText === val || ctrText === val) {
-                        var msgId = parseInt(rows[i].dataset.id);
-                        showDetail(window.TRACE_ID, msgId);
-                        rows[i].scrollIntoView({ block: 'nearest' });
+                if (!val || !vs) return;
+                // Search summary array by sequenceNum or msgCounter
+                for (var i = 0; i < vs.data.length; i++) {
+                    var item = vs.data[i];
+                    if (String(item.sequenceNum) === val || item.msgCounter === val) {
+                        vs.setSelectedIndex(i);
+                        vs.scrollToIndex(i);
+                        showDetail(item.traceId, item.id);
                         return;
                     }
                 }
@@ -1764,85 +1847,83 @@ function categoryAbbr(cat) {
         }
     }
 
-    // --- Find (jump between matches in visible rows) ---
-    var findMatches = [];
+    // --- Find (search all messages in virtual scroll data) ---
+    var findMatchIndices = []; // indices into vs.data
     var findIndex = -1;
 
     function clearFind() {
         var input = document.getElementById('find-input');
         if (input) input.value = '';
-        clearFindHighlights();
-        findMatches = [];
+        findMatchIndices = [];
         findIndex = -1;
         updateFindCount();
         if (input) input.blur();
     }
 
-    function clearFindHighlights() {
-        var rows = document.querySelectorAll('.msg-row.find-match, .msg-row.find-current');
-        for (var i = 0; i < rows.length; i++) {
-            rows[i].classList.remove('find-match', 'find-current');
-        }
-    }
-
     function updateFindCount() {
         var el = document.getElementById('find-count');
         if (!el) return;
-        if (findMatches.length === 0) {
+        if (findMatchIndices.length === 0) {
             var input = document.getElementById('find-input');
             el.textContent = (input && input.value.trim()) ? 'No matches' : '';
         } else {
-            el.textContent = (findIndex + 1) + ' of ' + findMatches.length;
+            el.textContent = (findIndex + 1) + ' of ' + findMatchIndices.length;
         }
     }
 
+    function summaryMatchesTerm(item, term) {
+        var haystack = [
+            String(item.sequenceNum || ''),
+            item.deviceSource || '',
+            item.deviceDest || '',
+            item.cmdClassifier || '',
+            item.functionSet || '',
+            item.shipMsgType || '',
+            item.direction || '',
+            item.msgCounter || ''
+        ].join(' ').toLowerCase();
+        return haystack.indexOf(term) !== -1;
+    }
+
     function runFind() {
-        clearFindHighlights();
-        findMatches = [];
+        findMatchIndices = [];
         findIndex = -1;
 
         var input = document.getElementById('find-input');
-        if (!input) return;
+        if (!input || !vs) return;
         var term = input.value.trim().toLowerCase();
         if (!term) { updateFindCount(); return; }
 
-        var rows = document.querySelectorAll('#message-tbody .msg-row');
-        for (var i = 0; i < rows.length; i++) {
-            var text = rows[i].textContent.toLowerCase();
-            if (text.indexOf(term) !== -1) {
-                rows[i].classList.add('find-match');
-                findMatches.push(rows[i]);
+        for (var i = 0; i < vs.data.length; i++) {
+            if (summaryMatchesTerm(vs.data[i], term)) {
+                findMatchIndices.push(i);
             }
         }
 
         updateFindCount();
-        if (findMatches.length > 0) {
+        if (findMatchIndices.length > 0) {
             findIndex = 0;
             highlightFindCurrent();
         }
     }
 
     function highlightFindCurrent() {
-        // Remove previous current
-        var prev = document.querySelector('.msg-row.find-current');
-        if (prev) prev.classList.remove('find-current');
-
-        if (findIndex < 0 || findIndex >= findMatches.length) return;
-        var row = findMatches[findIndex];
-        row.classList.add('find-current');
-        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (findIndex < 0 || findIndex >= findMatchIndices.length || !vs) return;
+        var dataIndex = findMatchIndices[findIndex];
+        vs.setSelectedIndex(dataIndex);
+        vs.scrollToIndex(dataIndex);
         updateFindCount();
     }
 
     function findNext() {
-        if (findMatches.length === 0) return;
-        findIndex = (findIndex + 1) % findMatches.length;
+        if (findMatchIndices.length === 0) return;
+        findIndex = (findIndex + 1) % findMatchIndices.length;
         highlightFindCurrent();
     }
 
     function findPrev() {
-        if (findMatches.length === 0) return;
-        findIndex = (findIndex - 1 + findMatches.length) % findMatches.length;
+        if (findMatchIndices.length === 0) return;
+        findIndex = (findIndex - 1 + findMatchIndices.length) % findMatchIndices.length;
         highlightFindCurrent();
     }
 
@@ -2021,6 +2102,10 @@ function categoryAbbr(cat) {
     };
 
     // --- Bookmarks ---
+    function applyBookmarkBadges() {
+        // No-op: bookmarkSet is read by buildRowHTML during render
+    }
+
     async function loadBookmarks() {
         if (typeof window.TRACE_ID === 'undefined') return;
         const container = document.getElementById('bookmark-list');
@@ -2029,25 +2114,24 @@ function categoryAbbr(cat) {
         try {
             const resp = await fetch('/api/traces/' + window.TRACE_ID + '/bookmarks');
             const bookmarks = await resp.json();
+            bookmarkSet = {};
             if (bookmarks.length === 0) {
                 container.innerHTML = '<div class="empty-state">No bookmarks yet</div>';
+                if (vs) vs.refresh();
                 return;
             }
             let html = '';
             bookmarks.forEach(b => {
                 const color = b.color || getComputedStyle(document.documentElement).getPropertyValue('--bookmark-default').trim();
+                bookmarkSet[b.messageId] = { label: b.label, color: color };
                 html += '<div class="bookmark-entry" onclick="showDetail(' + window.TRACE_ID + ',' + b.messageId + ')">';
                 html += '<span class="bookmark-label">' + escapeHtml(b.label || 'Message #' + b.messageId) + '</span>';
                 html += '<span class="bookmark-dot" style="background:' + escapeHtml(color) + '"></span>';
                 html += '</div>';
-
-                // Mark the message row
-                const bmCell = document.getElementById('bm-' + b.messageId);
-                if (bmCell) {
-                    bmCell.innerHTML = '<span class="bookmark-badge" style="background:' + escapeHtml(color) + '"></span>';
-                }
             });
             container.innerHTML = html;
+            // Re-render visible rows to show bookmark badges
+            if (vs) vs.refresh();
         } catch (e) {
             container.innerHTML = '<div class="empty-state">Failed to load bookmarks</div>';
         }
@@ -2229,12 +2313,12 @@ function categoryAbbr(cat) {
 
     // --- Status Bar ---
     function updateStatusBar() {
-        const tbody = document.getElementById('message-tbody');
         const statusMsgs = document.getElementById('status-messages');
-        if (tbody && statusMsgs) {
+        if (statusMsgs) {
             // Don't overwrite if filter indicator already set the text
             if (!statusMsgs.classList.contains('status-filtered')) {
-                statusMsgs.textContent = 'Messages: ' + tbody.children.length;
+                var count = vs ? vs.data.length : 0;
+                statusMsgs.textContent = 'Messages: ' + count;
             }
         }
     }
@@ -2269,7 +2353,9 @@ function categoryAbbr(cat) {
 
     if (autoScrollBtn) {
         autoScrollBtn.addEventListener('click', function() {
-            if (scrollContainer) {
+            if (vs && vs.data.length > 0) {
+                vs.scrollToIndex(vs.data.length - 1);
+            } else if (scrollContainer) {
                 scrollContainer.scrollTop = scrollContainer.scrollHeight;
             }
             autoScroll = true;

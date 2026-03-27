@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -75,7 +76,7 @@ var builtInDescriptors = map[string]ExtractionDescriptor{
 		CmdKey:       "setpointListData",
 		DataArrayKey: "setpointData",
 		IDField:      "setpointId",
-		Classifiers:  []string{"reply", "notify"},
+		Classifiers:  []string{"reply", "notify", "write"},
 		ActiveField:  "isSetpointActive",
 	},
 }
@@ -193,10 +194,10 @@ func scaledNumberToFloat(raw json.RawMessage) (float64, bool) {
 	return *sn.Number * math.Pow(10, float64(scale)), true
 }
 
-// extractGenericData extracts ID/value pairs from a SPINE payload using the
-// given ExtractionDescriptor. This is the single parameterized replacement for
-// extractMeasurementData, extractLoadControlData, and extractSetpointData.
-func extractGenericData(spinePayload json.RawMessage, desc ExtractionDescriptor) []GenericDataItem {
+// extractCmdArray extracts the cmd array from a SPINE datagram payload.
+// It handles both array and single-object forms of the cmd field (EEBUS
+// normalization may flatten single-element arrays to plain objects).
+func extractCmdArray(spinePayload json.RawMessage) ([]json.RawMessage, error) {
 	var dg struct {
 		Datagram struct {
 			Payload struct {
@@ -204,12 +205,40 @@ func extractGenericData(spinePayload json.RawMessage, desc ExtractionDescriptor)
 			} `json:"payload"`
 		} `json:"datagram"`
 	}
-	if err := json.Unmarshal(spinePayload, &dg); err != nil {
+	if err := json.Unmarshal(spinePayload, &dg); err == nil && len(dg.Datagram.Payload.Cmd) > 0 {
+		return dg.Datagram.Payload.Cmd, nil
+	}
+
+	// Fallback: cmd as a single object instead of an array
+	var dgSingle struct {
+		Datagram struct {
+			Payload struct {
+				Cmd json.RawMessage `json:"cmd"`
+			} `json:"payload"`
+		} `json:"datagram"`
+	}
+	if err := json.Unmarshal(spinePayload, &dgSingle); err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(dgSingle.Datagram.Payload.Cmd)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		return []json.RawMessage{dgSingle.Datagram.Payload.Cmd}, nil
+	}
+
+	return nil, nil
+}
+
+// extractGenericData extracts ID/value pairs from a SPINE payload using the
+// given ExtractionDescriptor. This is the single parameterized replacement for
+// extractMeasurementData, extractLoadControlData, and extractSetpointData.
+func extractGenericData(spinePayload json.RawMessage, desc ExtractionDescriptor) []GenericDataItem {
+	cmds, err := extractCmdArray(spinePayload)
+	if err != nil {
 		return nil
 	}
 
 	var items []GenericDataItem
-	for _, cmd := range dg.Datagram.Payload.Cmd {
+	for _, cmd := range cmds {
 		var cmdMap map[string]json.RawMessage
 		if err := json.Unmarshal(cmd, &cmdMap); err != nil {
 			continue
@@ -231,10 +260,16 @@ func extractGenericData(spinePayload json.RawMessage, desc ExtractionDescriptor)
 			continue
 		}
 
-		// Parse the array as a slice of generic objects
+		// Parse the array as a slice of generic objects.
+		// NormalizeEEBUSJSON may flatten single-element arrays to plain objects,
+		// so fall back to wrapping a single object in a slice.
 		var dataArray []map[string]json.RawMessage
 		if err := json.Unmarshal(arrayRaw, &dataArray); err != nil {
-			continue
+			var single map[string]json.RawMessage
+			if err := json.Unmarshal(arrayRaw, &single); err != nil {
+				continue
+			}
+			dataArray = []map[string]json.RawMessage{single}
 		}
 
 		for _, entry := range dataArray {
@@ -308,11 +343,9 @@ func extractGenericSeries(msgs []*model.Message, desc ExtractionDescriptor, labe
 			if !ok {
 				label := item.ID
 				unit := ""
-				if labels != nil {
-					if sl, exists := labels[item.ID]; exists {
-						label = sl.Label
-						unit = sl.Unit
-					}
+				if sl, exists := labels[item.ID]; exists {
+					label = sl.Label
+					unit = sl.Unit
 				}
 				series = &TimeseriesSeries{
 					ID:    item.ID,
@@ -360,18 +393,12 @@ func loadSetpointDescriptions(s *Server, traceID int64) map[string]string {
 			continue
 		}
 
-		var dg struct {
-			Datagram struct {
-				Payload struct {
-					Cmd []json.RawMessage `json:"cmd"`
-				} `json:"payload"`
-			} `json:"datagram"`
-		}
-		if err := json.Unmarshal(msg.SpinePayload, &dg); err != nil {
+		cmds, err := extractCmdArray(msg.SpinePayload)
+		if err != nil {
 			continue
 		}
 
-		for _, cmd := range dg.Datagram.Payload.Cmd {
+		for _, cmd := range cmds {
 			var cmdMap map[string]json.RawMessage
 			if err := json.Unmarshal(cmd, &cmdMap); err != nil {
 				continue

@@ -19,6 +19,9 @@
         <button class="intel-tab active" data-tab="usecases" title="EEBus use cases supported by each device">Use Cases</button>
         <button class="intel-tab" data-tab="subscriptions" title="Active subscriptions and notification tracking">Subscriptions</button>
         <button class="intel-tab" data-tab="metrics" title="Heartbeat interval jitter metrics">Heartbeat Accuracy</button>
+        <button class="intel-tab" data-tab="depgraph" title="Interactive dependency graph: use cases, devices, features, subscriptions">Dependencies</button>
+        <button class="intel-tab" data-tab="writetracking" title="Write history for LoadControl and Setpoint">Write Tracking</button>
+        <button class="intel-tab" data-tab="lifecycle" title="Use case lifecycle checklist">Lifecycle</button>
     </div>
     <div class="intel-content reveal reveal-d1" id="intel-content">
         <div class="intel-panel active" id="panel-usecases">
@@ -29,6 +32,15 @@
         </div>
         <div class="intel-panel" id="panel-metrics">
             <div id="metrics-summary" class="empty-state">Loading heartbeat metrics...</div>
+        </div>
+        <div class="intel-panel" id="panel-depgraph">
+            <div id="depgraph-content" class="empty-state">Loading dependencies...</div>
+        </div>
+        <div class="intel-panel" id="panel-writetracking">
+            <div class="empty-state">Loading write tracking...</div>
+        </div>
+        <div class="intel-panel" id="panel-lifecycle">
+            <div class="empty-state">Loading lifecycle checklist...</div>
         </div>
     </div>
 </div>

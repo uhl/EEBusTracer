@@ -79,6 +79,11 @@
                     title="Filter by EEBus use case context">
                 <option value="">All Use Cases</option>
             </select>
+            <input type="time" class="toolbar-input toolbar-input-time" id="filter-time-from"
+                   title="Show messages from this time" step="1">
+            <span class="toolbar-time-sep">&ndash;</span>
+            <input type="time" class="toolbar-input toolbar-input-time" id="filter-time-to"
+                   title="Show messages until this time" step="1">
             <button class="btn btn-sm" id="btn-clear-filter"
                     title="Clear all filters and show all messages">Reset</button>
             <div class="toolbar-presets">
@@ -117,21 +122,8 @@
                 </tr>
             </thead>
             <tbody id="message-tbody">
-                {{range .Messages}}
-                <tr class="msg-row" data-id="{{.ID}}" onclick="showDetail({{.TraceID}}, {{.ID}})">
-                    <td class="col-bookmark" id="bm-{{.ID}}"></td>
-                    <td class="col-seq">{{.SequenceNum}}</td>
-                    <td>{{.Timestamp.Format "15:04:05.000"}}</td>
-                    <td class="col-comm">{{.DeviceSource}} <span class="dir-arrow dir-{{.Direction}}">{{if eq .Direction "incoming"}}&#8592;{{else}}&#8594;{{end}}</span> {{.DeviceDest}}</td>
-                    <td class="cmd-{{.CmdClassifier}}">{{.CmdClassifier}}</td>
-                    <td>{{.FunctionSet}}</td>
-                </tr>
-                {{end}}
             </tbody>
         </table>
-        <button class="btn btn-sm load-more-btn" id="load-more-btn"
-                style="display:none;"
-                title="Fetch the next batch of messages">Load more messages...</button>
         <button class="auto-scroll-btn active" id="auto-scroll-btn"
                 title="Auto-scroll to latest">&#8595;</button>
     </div>
@@ -167,7 +159,7 @@
 </div>
 <script>
     window.TRACE_ID = {{.Trace.ID}};
-    window.TOTAL_MESSAGES = {{.TotalMessages}};
+    window.TRACE_STARTED_AT = "{{.Trace.StartedAt.Format "2006-01-02T15:04:05Z07:00"}}";
 </script>
 {{end}}
 

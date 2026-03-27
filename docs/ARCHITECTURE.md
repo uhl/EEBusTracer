@@ -18,6 +18,7 @@ them in SQLite, and serves a web-based UI for analysis.
 │  │  Source interface:       │    │(SHIP/SPINE) │              │
 │  │  ├─ UDPSource            │    └─────────────┘              │
 │  │  ├─ LogTailSource        │                                 │
+│  │  ├─ TCPSource            │                                 │
 │  │  └─ (future sources)     │    ┌─────────────┐              │
 │  └──────────┬───────────────┘───▶│    Store    │              │
 │             │                    │  (SQLite)   │              │
@@ -44,8 +45,10 @@ them in SQLite, and serves a web-based UI for analysis.
 cmd/eebustracer/       Main entrypoint, CLI commands (cobra)
                        - root.go: DB/logger initialization, --db/--verbose flags
                        - serve.go: HTTP server with embedded web UI
-                       - capture.go: headless UDP capture with .eet export
-                       - import_cmd.go: .eet file import
+                       - capture.go: headless UDP/TCP/log tail capture
+                       - import_cmd.go: .eet/.log file import
+                       - analyze.go: protocol analysis (usecases, metrics, etc.)
+                       - mdns.go: mDNS device discovery CLI
                        - version.go: build version
 
 internal/model/        Domain types (independent of persistence/protocol)
@@ -57,6 +60,7 @@ internal/capture/      Capture engine with pluggable sources
                        - source.go: Source interface (Name, Run)
                        - source_udp.go: UDPSource (connects to EEBus stack)
                        - source_logtail.go: LogTailSource (tails log files)
+                       - source_tcp.go: TCPSource (connects to CNetLogServer)
                        - capture.go: Engine with StartWithSource, context-based stop
                        - Batch insert: 100 messages or 500ms flush
                        - OnMessage callbacks for WebSocket fan-out
@@ -78,6 +82,8 @@ internal/store/        Data persistence
                          + v2 (FTS5, bookmarks, filter_presets)
                          + v3 (mdns_devices)
                          + v4 (chart_definitions with built-in seeds)
+                         + v5 (msg_counter/msg_counter_ref indexes)
+                         + v6 (setpoint chart definition fix)
                        - chart_repo.go: CRUD for chart definitions
                        - mdns_device_repo.go: upsert/list mDNS devices
                        - trace_repo.go: CRUD for traces
@@ -111,6 +117,13 @@ internal/api/          Web interface backend
                          filtering endpoint (maps use cases to function sets)
                        - subscriptions.go: subscription/binding API handlers
                        - metrics.go: heartbeat accuracy metrics API handler + CSV export
+                       - depgraph.go: dependency graph API handler
+                         (aggregates devices, use cases, subscriptions, bindings)
+                       - writetracking.go: write tracking API handler
+                         (extracts LoadControl/Setpoint writes, correlates results,
+                         computes durations, builds effective state)
+                       - lifecycle.go: use case lifecycle checklist API handler
+                         (evaluates 5 setup steps per device+UC pair)
                        - hub.go: WebSocket fan-out hub with typed events
                        - websocket.go: WS upgrade handler
                        - templates.go: HTML template rendering
@@ -124,6 +137,11 @@ internal/analysis/     Protocol intelligence and analysis
                          tracking with staleness detection
                        - metrics.go: heartbeat accuracy metrics (jitter
                          statistics per device pair, CSV export)
+                       - depgraph.go: dependency tree builder
+                         (use cases → devices → entities → features,
+                         subscription/binding edges)
+                       - lifecycle.go: lifecycle spec map + evaluator
+                         (5-step checklist per device+UC pair)
 
 internal/mdns/         mDNS device discovery
                        - monitor.go: Browse _ship._tcp, parse TXT records,
@@ -135,8 +153,8 @@ web/                   Frontend assets (embedded via embed.FS)
                        - static/css/: "Oscillograph" theme CSS with dark/light
                          toggle (dark default, "Blueprint" light theme via
                          [data-theme="light"]), self-hosted Space Grotesk +
-                         JetBrains Mono fonts, CRT noise overlay, oscilloscope
-                         grid pattern, amber glow accents, animations
+                         JetBrains Mono fonts, CRT noise overlay, amber glow
+                         accents, animations
                        - static/fonts/: Space Grotesk (variable, WOFF2) and
                          JetBrains Mono (variable, WOFF2) self-hosted fonts
                        - static/js/common.js: shared utilities (CMD_COLORS, etc.)
@@ -146,9 +164,13 @@ web/                   Frontend assets (embedded via embed.FS)
                        - static/js/discovery.js: mDNS discovery page logic
                        - static/js/charts.js: Chart.js measurement/load charts
                        - static/js/intelligence.js: protocol intelligence page
-                         (use cases, subscriptions, heartbeat accuracy)
+                         (use cases, subscriptions, heartbeat accuracy,
+                         dependency tree, write tracking, lifecycle checklist)
+                       - static/js/virtual-scroll.js: virtual scroll engine
+                         for message table (renders only visible rows)
                        - static/js/vendor/: Chart.js v4,
-                         chartjs-plugin-zoom, Hammer.js (vendored, no CDN)
+                         chartjs-plugin-zoom, Hammer.js
+                         (vendored, no CDN)
 ```
 
 ## Data Flow
@@ -168,7 +190,7 @@ Source.Run(ctx, emit) → emit(msg)
         → pre-parsed model.Message
 
   → model.Message populated
-  → OnMessage callbacks (→ Hub.BroadcastEvent("message") → WebSocket clients)
+  → OnMessage callbacks (→ msg.ToSummary() → Hub.BroadcastEvent("message") → WebSocket clients)
   → Batch buffer → InsertMessages (SQLite)
 ```
 
@@ -181,10 +203,11 @@ Source.Run(ctx, emit) → emit(msg)
 
 ### Analysis (UI)
 ```
-Browser → GET /api/traces/{id}/messages?search=Measurement&cmdClassifier=read&device=devA&limit=50
-  → MessageRepo.ListMessages (FTS JOIN + parameterized SQL query)
-  → JSON response → rendered in browser table
-  → Click message → GET /api/traces/{id}/messages/{mid}
+Browser → GET /api/traces/{id}/messages/summaries?search=Measurement&cmdClassifier=read
+  → MessageRepo.ListMessageSummaries (FTS JOIN, no LIMIT — returns all matching summaries)
+  → JSON array → stored in client-side JS array, rendered via VirtualScroll engine
+  → Only ~50-60 visible rows in DOM at any time; spacer <tr> elements maintain scroll position
+  → Click message → GET /api/traces/{id}/messages/{mid} (on-demand, LRU-cached)
   → Detail panel: decoded JSON, raw hex, headers, related messages
   → GET /api/traces/{id}/messages/{mid}/related
   → Direct correlation: latency, relationship type, result status
@@ -257,6 +280,31 @@ GET /api/traces/{id}/metrics
   → Compute heartbeat interval jitter statistics per device pair
   → Response: { heartbeatJitter: [{ devicePair, meanIntervalMs, stdDevMs, minIntervalMs, maxIntervalMs, sampleCount }] }
 
+GET /api/traces/{id}/depgraph
+  → Detect use cases, list devices with discovery, track subscriptions/bindings
+  → BuildDependencyTree: create per-device entity/feature trees with UC annotations,
+    subscription/binding edges as flat list
+  → Response: { devices: [...], edges: [...] } for tree view rendering
+
+GET /api/traces/{id}/writetracking
+  → Query LoadControlLimitListData + SetpointListData write messages
+  → For each write: extract values per phase/scope, enrich labels from descriptions
+  → Correlate result via msgCounterRef (accepted/rejected/pending)
+  → Compute duration until next write to same ID (effective active period)
+  → Build effective state: latest value per limit/setpoint ID
+  → Response: { writes: [...], effectiveState: [...] }
+
+GET /api/traces/{id}/lifecycle
+  → Detect use cases per device (from nodeManagementUseCaseData)
+  → For each device+UC pair, evaluate 5 setup steps:
+    1. SHIP handshake completed (connectionHello exchange)
+    2. Feature discovery (required features present per UC spec)
+    3. Use case announced and available
+    4. Required subscriptions established
+    5. Required bindings established (if applicable)
+  → Each step: pass/fail/partial/pending/na with details and missing items
+  → Response: [{ deviceAddr, shortName, useCase, abbreviation, overallStatus, steps: [...] }]
+
 eebustracer analyze <file> --check all
   → Parse .eet file → run analysis functions from internal/analysis/
   → Text output: formatted tables with severity badges
@@ -290,7 +338,6 @@ POST /api/mdns/start
 | FTS5 search | SQLite FTS5 virtual table with triggers | Fast full-text search across message payloads; triggers keep index in sync |
 | Schema migration | Version-based incremental migration | v1→v2 with automatic FTS backfill; idempotent re-runs |
 | Connection state | Computed on-the-fly, not stored | No schema changes needed; always consistent with message data |
-| SVG visualizations | D3.js v7 (vendored) | Industry standard for data-driven SVG; no build step needed |
 | Chart rendering | Chart.js v4 (vendored) | Lightweight, interactive charts; time axis support built-in |
 | Vendored JS libs | No CDN, minified files in repo | Offline-capable, no external dependencies at runtime |
 | Viz page layout | Separate pages per visualization | Avoids overloading trace page; each loads only needed JS |
@@ -306,6 +353,10 @@ POST /api/mdns/start
 | Subscription tracking | Walk messages in sequence | Same pattern as `buildConnectionStates()`; messages are source of truth |
 | Performance metrics | Per-request computation | Fast enough for typical traces; time range filter narrows window for large ones |
 | Conformance checks | Five independent check functions | Each returns `[]Violation`; easy to add new checks; clear severity levels |
+| Virtual scroll | Fat client: all summaries in JS array, render visible rows | Eliminates 2000-msg page limit; ~300 bytes/summary; 100k msgs ≈ 30 MB; smooth 60fps scroll |
+| MessageSummary | Lightweight projection of Message (no payloads) | Reduces transfer size by ~10x; WS broadcasts use summaries; detail fetched on-demand with LRU cache |
+| Dependency tree | DOM tree view (no library) | Lightweight per-device entity/feature trees rendered as HTML; reuses existing card/pill styles; no external dependency |
+| Tree computation | On-the-fly from existing data | No new schema; aggregates devices, use cases, subscriptions into tree structure; consistent with source of truth |
 
 ## External Dependencies
 

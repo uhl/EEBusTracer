@@ -54,16 +54,17 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if version < 6 {
+		if err := migrateV6(db); err != nil {
+			return fmt.Errorf("migrate v6: %w", err)
+		}
+	}
+
 	return nil
 }
 
-func migrateV5(db *sql.DB) error {
-	stmts := []string{
-		`CREATE INDEX IF NOT EXISTS idx_messages_msg_counter ON messages(trace_id, msg_counter)`,
-		`CREATE INDEX IF NOT EXISTS idx_messages_msg_counter_ref ON messages(trace_id, msg_counter_ref)`,
-		`UPDATE schema_version SET version = 5`,
-	}
-
+// execInTx runs the given SQL statements in a single transaction.
+func execInTx(db *sql.DB, stmts []string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -79,8 +80,27 @@ func migrateV5(db *sql.DB) error {
 	return tx.Commit()
 }
 
+func migrateV6(db *sql.DB) error {
+	// Fix built-in Setpoints chart: add "write" classifier so CEM→EVSE setpoint
+	// writes show up in the chart (same fix previously applied to Load Control).
+	return execInTx(db, []string{
+		`UPDATE chart_definitions SET sources =
+			'[{"functionSet":"SetpointListData","cmdKey":"setpointListData","dataArrayKey":"setpointData","idField":"setpointId","classifiers":["reply","notify","write"]}]'
+		WHERE name = 'Setpoints' AND is_built_in = 1`,
+		`UPDATE schema_version SET version = 6`,
+	})
+}
+
+func migrateV5(db *sql.DB) error {
+	return execInTx(db, []string{
+		`CREATE INDEX IF NOT EXISTS idx_messages_msg_counter ON messages(trace_id, msg_counter)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_msg_counter_ref ON messages(trace_id, msg_counter_ref)`,
+		`UPDATE schema_version SET version = 5`,
+	})
+}
+
 func migrateV4(db *sql.DB) error {
-	stmts := []string{
+	return execInTx(db, []string{
 		`CREATE TABLE IF NOT EXISTS chart_definitions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
@@ -107,29 +127,15 @@ func migrateV4(db *sql.DB) error {
 		// Seed built-in: Setpoints
 		`INSERT INTO chart_definitions (name, chart_type, is_built_in, sources) VALUES (
 			'Setpoints', 'line', 1,
-			'[{"functionSet":"SetpointListData","cmdKey":"setpointListData","dataArrayKey":"setpointData","idField":"setpointId","classifiers":["reply","notify"]}]'
+			'[{"functionSet":"SetpointListData","cmdKey":"setpointListData","dataArrayKey":"setpointData","idField":"setpointId","classifiers":["reply","notify","write"]}]'
 		)`,
 
 		`UPDATE schema_version SET version = 4`,
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
-
-	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("execute %q: %w", stmt[:min(40, len(stmt))], err)
-		}
-	}
-
-	return tx.Commit()
+	})
 }
 
 func migrateV3(db *sql.DB) error {
-	stmts := []string{
+	return execInTx(db, []string{
 		`CREATE TABLE IF NOT EXISTS mdns_devices (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			instance_name TEXT NOT NULL UNIQUE,
@@ -147,25 +153,11 @@ func migrateV3(db *sql.DB) error {
 		)`,
 
 		`UPDATE schema_version SET version = 3`,
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
-
-	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("execute %q: %w", stmt[:min(40, len(stmt))], err)
-		}
-	}
-
-	return tx.Commit()
+	})
 }
 
 func migrateV1(db *sql.DB) error {
-	stmts := []string{
+	return execInTx(db, []string{
 		`CREATE TABLE IF NOT EXISTS traces (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
@@ -224,25 +216,11 @@ func migrateV1(db *sql.DB) error {
 		)`,
 
 		`UPDATE schema_version SET version = 1`,
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
-
-	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("execute %q: %w", stmt[:40], err)
-		}
-	}
-
-	return tx.Commit()
+	})
 }
 
 func migrateV2(db *sql.DB) error {
-	stmts := []string{
+	if err := execInTx(db, []string{
 		// Full-text search on message content
 		`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 			normalized_json, ship_payload, spine_payload, parse_error,
@@ -293,22 +271,8 @@ func migrateV2(db *sql.DB) error {
 		)`,
 
 		`UPDATE schema_version SET version = 2`,
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
-
-	for _, stmt := range stmts {
-		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("execute %q: %w", stmt[:min(40, len(stmt))], err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit v2 migration: %w", err)
+	}); err != nil {
+		return err
 	}
 
 	// Backfill FTS index with existing messages (outside transaction since FTS operations

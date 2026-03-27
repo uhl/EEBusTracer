@@ -113,6 +113,78 @@ modules. No forking required.
 
 ---
 
+## Completed (v0.5.0)
+
+### Correlation & Context (v0.5.0)
+
+- [x] Correlated message highlighting (request/response partners)
+- [x] Orphaned request detection with red dot indicator and warning banner
+- [x] Use-case-context filtering (filter messages by EEBus use case)
+- [x] Richer correlation types: `read-reply`, `write-result`, `call-result`
+- [x] Result status badges (accepted/rejected) for SPINE reply messages
+- [x] Feature conversation grouping by device pair + function set
+- [x] Response latency in Related tab
+- [x] DB indexes on `msg_counter` and `msg_counter_ref` (schema v5)
+
+### UI Polish (v0.5.0)
+
+- [x] "Oscillograph" dark theme with amber/gold accents, phosphor grain overlay
+- [x] "Blueprint" light theme with warm cream/navy palette
+- [x] Self-hosted Space Grotesk + JetBrains Mono variable fonts
+- [x] Active state awareness in charts (dashed lines for inactive, ON/OFF annotations)
+- [x] Sequence number column in message table
+- [x] Classifier color-coding in message rows
+- [x] Descriptive tooltips on all UI controls
+- [x] About page with version, dependency, and system info
+- [x] Collapsible capture controls on trace pages
+- [x] Filter active indicator in status bar
+
+---
+
+## Completed (v0.6.0)
+
+### Virtual Scroll & Performance
+
+- [x] Virtual scroll message table: all summaries loaded, only visible rows rendered
+- [x] `MessageSummary` lightweight projection (no payloads, ~300 bytes each)
+- [x] `GET /api/traces/{id}/messages/summaries` endpoint
+- [x] On-demand detail loading with LRU cache (50 entries)
+- [x] WebSocket broadcasts use `MessageSummary` instead of full `Message`
+- [x] Find-in-view (Ctrl+F) searches all messages in virtual scroll array
+- [x] Jump-to-message (Ctrl+G) uses summary array by sequence/counter
+- [x] Boolean search operators (OR, AND, NOT) in FTS5 search
+- [x] Time range filter inputs in message toolbar
+
+### Protocol Intelligence — New Tabs
+
+- [x] **Dependency tree view**: per-device entity/feature trees with use case pills,
+      subscription/binding edges; DOM tree replacing Cytoscape.js force graph
+- [x] **Write tracking**: LoadControl/Setpoint write history with result correlation,
+      latency, duration, and effective state cards
+- [x] **Lifecycle checklist**: 5-step setup verification per device+UC pair (SHIP
+      handshake, feature discovery, UC announced, subscriptions, bindings);
+      grouped-by-device card layout
+- [x] Entity-type filtering for feature discovery and dependency graph (EVSE vs EV)
+- [x] DBEVC use case abbreviation and function set mappings
+
+### Protocol Decoding Enhancements
+
+- [x] DeviceConfiguration overview with human-readable key names, typed values
+- [x] Entity/feature addressing in message detail overview
+- [x] Lifecycle checklist details list specific missing items (not just counts)
+
+### API Endpoints (v0.6.0)
+
+- [x] `GET /api/traces/{id}/depgraph` — dependency tree
+- [x] `GET /api/traces/{id}/writetracking` — write tracking
+- [x] `GET /api/traces/{id}/lifecycle` — lifecycle checklist
+
+### Pending
+
+- [ ] Click a failed lifecycle step to jump to the relevant message
+
+---
+
 ## Future Work
 
 ### Sequence Diagram View
@@ -133,8 +205,6 @@ modules. No forking required.
 ### Enhanced Message Correlation
 
 - [ ] Visual grouping of correlated messages (expand/collapse)
-- [x] Highlight orphaned requests (no matching response) — v0.5.0
-- [x] Filter messages by use case context — v0.5.0
 
 ### WebSocket Proxy Capture
 

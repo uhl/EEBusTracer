@@ -169,6 +169,26 @@ func TestExtractGenericData(t *testing.T) {
 			wantVal2: 50.0,
 		},
 		{
+			name: "single setpoint object (flattened array)",
+			desc: builtInDescriptors["setpoint"],
+			payload: `{
+				"datagram": {
+					"payload": {
+						"cmd": [
+							{
+								"setpointListData": {
+									"setpointData": {"setpointId": 1, "value": {"number": -1650, "scale": 0}}
+								}
+							}
+						]
+					}
+				}
+			}`,
+			wantLen: 1,
+			wantID:  "1",
+			wantVal: -1650.0,
+		},
+		{
 			name:    "empty payload",
 			desc:    builtInDescriptors["measurement"],
 			payload: `{}`,
@@ -467,6 +487,29 @@ func TestExtractGenericSeries(t *testing.T) {
 		}
 	})
 
+	t.Run("setpoint accepts write classifier", func(t *testing.T) {
+		msgs := []*model.Message{
+			{
+				ID: 1, Timestamp: now, CmdClassifier: "write",
+				SpinePayload: json.RawMessage(`{
+					"datagram": {"payload": {"cmd": [{"setpointListData": {
+						"setpointData": [
+							{"setpointId": 1, "value": {"number": -1650, "scale": 0}}
+						]
+					}}]}}
+				}`),
+			},
+		}
+
+		series := extractGenericSeries(msgs, builtInDescriptors["setpoint"], nil, "")
+		if len(series) != 1 {
+			t.Fatalf("expected 1 series (write accepted for setpoint), got %d", len(series))
+		}
+		if series[0].DataPoints[0].Value != -1650.0 {
+			t.Errorf("value = %f, want -1650", series[0].DataPoints[0].Value)
+		}
+	})
+
 	t.Run("setpoint series with labels", func(t *testing.T) {
 		msgs := []*model.Message{
 			{
@@ -604,54 +647,85 @@ func TestBuiltInDescriptors(t *testing.T) {
 
 // Integration tests — these test the full HTTP API path.
 
-func TestAPI_Timeseries_Measurement(t *testing.T) {
-	ts, db := setupTestServer(t)
-
-	traceRepo := store.NewTraceRepo(db)
-	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
-	traceRepo.CreateTrace(trace)
-
-	msgRepo := store.NewMessageRepo(db)
-	now := time.Now()
-	msgs := []*model.Message{
+func TestAPI_Timeseries_BuiltInTypes(t *testing.T) {
+	tests := []struct {
+		name        string
+		dataType    string
+		functionSet string
+		cmdKey      string
+		dataArrayKey string
+		idField     string
+		idValue     string
+		wantValue   float64
+	}{
 		{
-			TraceID: trace.ID, SequenceNum: 1, Timestamp: now,
-			ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply",
-			FunctionSet: "MeasurementListData",
-			SpinePayload: json.RawMessage(`{
-				"datagram": {"payload": {"cmd": [{"measurementListData": {
-					"measurementData": [
-						{"measurementId": 1, "value": {"number": 2300, "scale": 0}}
-					]
-				}}]}}
-			}`),
+			name: "measurement", dataType: "measurement",
+			functionSet: "MeasurementListData", cmdKey: "measurementListData",
+			dataArrayKey: "measurementData", idField: "measurementId", idValue: "1",
+			wantValue: 2300,
+		},
+		{
+			name: "loadcontrol", dataType: "loadcontrol",
+			functionSet: "LoadControlLimitListData", cmdKey: "loadControlLimitListData",
+			dataArrayKey: "loadControlLimitData", idField: "limitId", idValue: "0",
+			wantValue: 4600,
+		},
+		{
+			name: "setpoint", dataType: "setpoint",
+			functionSet: "SetpointListData", cmdKey: "setpointListData",
+			dataArrayKey: "setpointData", idField: "setpointId", idValue: "1",
+			wantValue: 220,
 		},
 	}
-	msgRepo.InsertMessages(msgs)
 
-	resp, err := http.Get(ts.URL + "/api/traces/1/timeseries?type=measurement")
-	if err != nil {
-		t.Fatalf("GET timeseries failed: %v", err)
-	}
-	if resp.StatusCode != 200 {
-		t.Errorf("GET timeseries status = %d, want 200", resp.StatusCode)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, db := setupTestServer(t)
 
-	var tsResp TimeseriesResponse
-	json.NewDecoder(resp.Body).Decode(&tsResp)
-	resp.Body.Close()
+			traceRepo := store.NewTraceRepo(db)
+			trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
+			traceRepo.CreateTrace(trace)
 
-	if tsResp.Type != "measurement" {
-		t.Errorf("type = %q, want %q", tsResp.Type, "measurement")
-	}
-	if len(tsResp.Series) != 1 {
-		t.Fatalf("expected 1 series, got %d", len(tsResp.Series))
-	}
-	if len(tsResp.Series[0].DataPoints) != 1 {
-		t.Errorf("expected 1 data point, got %d", len(tsResp.Series[0].DataPoints))
-	}
-	if tsResp.Series[0].DataPoints[0].Value != 2300.0 {
-		t.Errorf("value = %f, want 2300", tsResp.Series[0].DataPoints[0].Value)
+			msgRepo := store.NewMessageRepo(db)
+			numBytes, _ := json.Marshal(tt.wantValue)
+			payload := `{"datagram":{"payload":{"cmd":[{"` + tt.cmdKey + `":{"` + tt.dataArrayKey + `":[{"` + tt.idField + `":` + tt.idValue + `,"value":{"number":` + string(numBytes) + `,"scale":0}}]}}]}}}`
+
+			msgs := []*model.Message{
+				{
+					TraceID: trace.ID, SequenceNum: 1, Timestamp: time.Now(),
+					ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply",
+					FunctionSet: tt.functionSet,
+					SpinePayload: json.RawMessage(payload),
+				},
+			}
+			msgRepo.InsertMessages(msgs)
+
+			resp, err := http.Get(ts.URL + "/api/traces/1/timeseries?type=" + tt.dataType)
+			if err != nil {
+				t.Fatalf("GET failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != 200 {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+
+			var tsResp TimeseriesResponse
+			json.NewDecoder(resp.Body).Decode(&tsResp)
+
+			if tsResp.Type != tt.dataType {
+				t.Errorf("type = %q, want %q", tsResp.Type, tt.dataType)
+			}
+			if len(tsResp.Series) != 1 {
+				t.Fatalf("expected 1 series, got %d", len(tsResp.Series))
+			}
+			if len(tsResp.Series[0].DataPoints) != 1 {
+				t.Fatalf("expected 1 data point, got %d", len(tsResp.Series[0].DataPoints))
+			}
+			if tsResp.Series[0].DataPoints[0].Value != tt.wantValue {
+				t.Errorf("value = %f, want %f", tsResp.Series[0].DataPoints[0].Value, tt.wantValue)
+			}
+		})
 	}
 }
 
@@ -666,115 +740,17 @@ func TestAPI_Timeseries_EmptyTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET timeseries failed: %v", err)
 	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode != 200 {
 		t.Errorf("GET timeseries status = %d, want 200", resp.StatusCode)
 	}
 
 	var tsResp TimeseriesResponse
 	json.NewDecoder(resp.Body).Decode(&tsResp)
-	resp.Body.Close()
 
 	if len(tsResp.Series) != 0 {
 		t.Errorf("expected 0 series for empty trace, got %d", len(tsResp.Series))
-	}
-}
-
-func TestAPI_Timeseries_LoadControl(t *testing.T) {
-	ts, db := setupTestServer(t)
-
-	traceRepo := store.NewTraceRepo(db)
-	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
-	traceRepo.CreateTrace(trace)
-
-	msgRepo := store.NewMessageRepo(db)
-	now := time.Now()
-	msgs := []*model.Message{
-		{
-			TraceID: trace.ID, SequenceNum: 1, Timestamp: now,
-			ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply",
-			FunctionSet: "LoadControlLimitListData",
-			SpinePayload: json.RawMessage(`{
-				"datagram": {"payload": {"cmd": [{"loadControlLimitListData": {
-					"loadControlLimitData": [
-						{"limitId": 0, "value": {"number": 4600, "scale": 0}}
-					]
-				}}]}}
-			}`),
-		},
-	}
-	msgRepo.InsertMessages(msgs)
-
-	resp, err := http.Get(ts.URL + "/api/traces/1/timeseries?type=loadcontrol")
-	if err != nil {
-		t.Fatalf("GET loadcontrol failed: %v", err)
-	}
-	if resp.StatusCode != 200 {
-		t.Errorf("GET loadcontrol status = %d, want 200", resp.StatusCode)
-	}
-
-	var tsResp TimeseriesResponse
-	json.NewDecoder(resp.Body).Decode(&tsResp)
-	resp.Body.Close()
-
-	if tsResp.Type != "loadcontrol" {
-		t.Errorf("type = %q, want %q", tsResp.Type, "loadcontrol")
-	}
-	if len(tsResp.Series) != 1 {
-		t.Fatalf("expected 1 series, got %d", len(tsResp.Series))
-	}
-	if tsResp.Series[0].DataPoints[0].Value != 4600.0 {
-		t.Errorf("value = %f, want 4600", tsResp.Series[0].DataPoints[0].Value)
-	}
-}
-
-func TestAPI_Timeseries_Setpoint(t *testing.T) {
-	ts, db := setupTestServer(t)
-
-	traceRepo := store.NewTraceRepo(db)
-	trace := &model.Trace{Name: "test", StartedAt: time.Now(), CreatedAt: time.Now()}
-	traceRepo.CreateTrace(trace)
-
-	msgRepo := store.NewMessageRepo(db)
-	now := time.Now()
-	msgs := []*model.Message{
-		{
-			TraceID: trace.ID, SequenceNum: 1, Timestamp: now,
-			ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply",
-			FunctionSet: "SetpointListData",
-			SpinePayload: json.RawMessage(`{
-				"datagram": {"payload": {"cmd": [{"setpointListData": {
-					"setpointData": [
-						{"setpointId": 1, "value": {"number": 220, "scale": 0}}
-					]
-				}}]}}
-			}`),
-		},
-	}
-	msgRepo.InsertMessages(msgs)
-
-	resp, err := http.Get(ts.URL + "/api/traces/1/timeseries?type=setpoint")
-	if err != nil {
-		t.Fatalf("GET setpoint failed: %v", err)
-	}
-	if resp.StatusCode != 200 {
-		t.Errorf("GET setpoint status = %d, want 200", resp.StatusCode)
-	}
-
-	var tsResp TimeseriesResponse
-	json.NewDecoder(resp.Body).Decode(&tsResp)
-	resp.Body.Close()
-
-	if tsResp.Type != "setpoint" {
-		t.Errorf("type = %q, want %q", tsResp.Type, "setpoint")
-	}
-	if len(tsResp.Series) != 1 {
-		t.Fatalf("expected 1 series, got %d", len(tsResp.Series))
-	}
-	if len(tsResp.Series[0].DataPoints) != 1 {
-		t.Errorf("expected 1 data point, got %d", len(tsResp.Series[0].DataPoints))
-	}
-	if tsResp.Series[0].DataPoints[0].Value != 220.0 {
-		t.Errorf("value = %f, want 220", tsResp.Series[0].DataPoints[0].Value)
 	}
 }
 

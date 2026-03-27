@@ -30,10 +30,20 @@ type LimitDesc struct {
 	Label           string `json:"label"`
 }
 
-// DescriptionContext holds enriched descriptions for measurements and limits.
+// KeyValueDesc describes a device configuration key with its value type.
+type KeyValueDesc struct {
+	KeyID     string `json:"keyId"`
+	KeyName   string `json:"keyName"`
+	ValueType string `json:"valueType"`
+	Unit      string `json:"unit,omitempty"`
+}
+
+// DescriptionContext holds enriched descriptions for measurements, limits,
+// and device configuration keys.
 type DescriptionContext struct {
 	Measurements map[string]MeasurementDesc `json:"measurements"`
 	Limits       map[string]LimitDesc       `json:"limits"`
+	KeyValues    map[string]KeyValueDesc    `json:"keyValues"`
 }
 
 func phaseLabel(phase string) string {
@@ -116,6 +126,7 @@ func loadDescriptionContext(s *Server, traceID int64) *DescriptionContext {
 	ctx := &DescriptionContext{
 		Measurements: make(map[string]MeasurementDesc),
 		Limits:       make(map[string]LimitDesc),
+		KeyValues:    make(map[string]KeyValueDesc),
 	}
 
 	// Step 1: Load electrical connection parameter descriptions → measurementId → phase
@@ -126,6 +137,9 @@ func loadDescriptionContext(s *Server, traceID int64) *DescriptionContext {
 
 	// Step 3: Load load control limit descriptions
 	loadLimitDescs(s, traceID, phaseMap, ctx)
+
+	// Step 4: Load device configuration key/value descriptions
+	loadDeviceConfigDescs(s, traceID, ctx)
 
 	return ctx
 }
@@ -353,6 +367,77 @@ func loadLimitDescs(s *Server, traceID int64, phaseMap map[string]string, ctx *D
 
 				desc.Label = buildLimitLabel(desc)
 				ctx.Limits[limitID] = desc
+			}
+		}
+	}
+}
+
+func loadDeviceConfigDescs(s *Server, traceID int64, ctx *DescriptionContext) {
+	msgs, err := s.msgRepo.ListMessages(traceID, store.MessageFilter{
+		FunctionSet:   "DeviceConfigurationKeyValueDescriptionListData",
+		CmdClassifier: "reply",
+		ShipMsgType:   "data",
+		Limit:         10,
+	})
+	if err != nil || len(msgs) == 0 {
+		return
+	}
+
+	for _, msg := range msgs {
+		if len(msg.SpinePayload) == 0 {
+			continue
+		}
+
+		var dg struct {
+			Datagram struct {
+				Payload struct {
+					Cmd []json.RawMessage `json:"cmd"`
+				} `json:"payload"`
+			} `json:"datagram"`
+		}
+		if err := json.Unmarshal(msg.SpinePayload, &dg); err != nil {
+			continue
+		}
+
+		for _, cmd := range dg.Datagram.Payload.Cmd {
+			var cmdMap map[string]json.RawMessage
+			if err := json.Unmarshal(cmd, &cmdMap); err != nil {
+				continue
+			}
+
+			raw, ok := cmdMap["deviceConfigurationKeyValueDescriptionListData"]
+			if !ok {
+				continue
+			}
+
+			var dckv struct {
+				Data []struct {
+					KeyID     *json.Number `json:"keyId"`
+					KeyName   *string      `json:"keyName"`
+					ValueType *string      `json:"valueType"`
+					Unit      *string      `json:"unit"`
+				} `json:"deviceConfigurationKeyValueDescriptionData"`
+			}
+			if err := json.Unmarshal(raw, &dckv); err != nil {
+				continue
+			}
+
+			for _, d := range dckv.Data {
+				if d.KeyID == nil {
+					continue
+				}
+				id := d.KeyID.String()
+				desc := KeyValueDesc{KeyID: id}
+				if d.KeyName != nil {
+					desc.KeyName = *d.KeyName
+				}
+				if d.ValueType != nil {
+					desc.ValueType = *d.ValueType
+				}
+				if d.Unit != nil {
+					desc.Unit = *d.Unit
+				}
+				ctx.KeyValues[id] = desc
 			}
 		}
 	}

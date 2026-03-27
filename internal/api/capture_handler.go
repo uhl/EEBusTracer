@@ -63,11 +63,6 @@ func (s *Server) handleCaptureStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Register WebSocket broadcast
-	s.engine.OnMessage(func(msg *model.Message) {
-		s.hub.BroadcastEvent("message", msg)
-	})
-
 	if err := s.engine.Start(trace.ID, target); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -123,11 +118,6 @@ func (s *Server) handleCaptureStartLogTail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Register WebSocket broadcast
-	s.engine.OnMessage(func(msg *model.Message) {
-		s.hub.BroadcastEvent("message", msg)
-	})
-
 	src := capture.NewLogTailSource(req.Path, s.engine.Parser(), s.logger)
 	if err := s.engine.StartWithSource(trace.ID, src, req.Path); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -177,11 +167,6 @@ func (s *Server) handleCaptureStartTCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// Register WebSocket broadcast
-	s.engine.OnMessage(func(msg *model.Message) {
-		s.hub.BroadcastEvent("message", msg)
-	})
 
 	src := capture.NewTCPSource(target, s.engine.Parser(), s.logger)
 	if err := s.engine.StartWithSource(trace.ID, src, target); err != nil {

@@ -36,6 +36,7 @@ var useCaseAbbreviations = map[string]string{
 	"measurementOfElectricityDuringEvCharging":              "MOEEC",
 	"optimizationOfSelfConsumptionDuringEvCharging":         "OSCEV",
 	"overloadProtectionByEvChargingCurrentCurtailment":      "OPEV",
+	"dynamicBidirectionalEvCharging":                        "DBEVC",
 	"coordinatedEvCharging":                                 "CEC",
 	"configurationOfDhwSystemFunction":                      "CDSF",
 	"configurationOfDhwTemperature":                         "CDT",
@@ -62,23 +63,34 @@ var useCaseAbbreviations = map[string]string{
 	"monitoringOfPowerConsumptionOfRoomHeatingSystemFunction": "MOPCRHSF",
 }
 
+// UseCaseFunctionSetSpec describes the SPINE function sets and optional entity
+// type constraint for a use case. Empty EntityTypes means match any entity type.
+type UseCaseFunctionSetSpec struct {
+	Functions   []string
+	EntityTypes []string // empty = match any entity type
+}
+
 // UseCaseFunctionSets maps use case abbreviations to the SPINE function sets
 // typically associated with that use case. This is a best-effort static mapping.
-var UseCaseFunctionSets = map[string][]string{
-	"LPC": {"LoadControlLimitListData", "LoadControlLimitDescriptionListData",
-		"LoadControlLimitConstraintsListData"},
-	"LPP": {"LoadControlLimitListData", "LoadControlLimitDescriptionListData",
-		"LoadControlLimitConstraintsListData"},
-	"MPC": {"MeasurementListData", "MeasurementDescriptionListData",
-		"MeasurementConstraintsListData"},
-	"MGCP": {"MeasurementListData", "MeasurementDescriptionListData",
-		"MeasurementConstraintsListData"},
-	"EVCC": {"DeviceConfigurationKeyValueListData",
+var UseCaseFunctionSets = map[string]UseCaseFunctionSetSpec{
+	"LPC": {Functions: []string{"LoadControlLimitListData", "LoadControlLimitDescriptionListData",
+		"LoadControlLimitConstraintsListData"}, EntityTypes: []string{"EVSE"}},
+	"LPP": {Functions: []string{"LoadControlLimitListData", "LoadControlLimitDescriptionListData",
+		"LoadControlLimitConstraintsListData"}},
+	"MPC": {Functions: []string{"MeasurementListData", "MeasurementDescriptionListData",
+		"MeasurementConstraintsListData"}, EntityTypes: []string{"EVSE", "EV"}},
+	"MGCP": {Functions: []string{"MeasurementListData", "MeasurementDescriptionListData",
+		"MeasurementConstraintsListData"}},
+	"EVCC": {Functions: []string{"DeviceConfigurationKeyValueListData",
 		"DeviceConfigurationKeyValueDescriptionListData",
-		"IdentificationListData"},
-	"MOB":  {"MeasurementListData", "MeasurementDescriptionListData"},
-	"MOI":  {"MeasurementListData", "MeasurementDescriptionListData"},
-	"MOPVS": {"MeasurementListData", "MeasurementDescriptionListData"},
+		"IdentificationListData"}, EntityTypes: []string{"EV"}},
+	"MOB":   {Functions: []string{"MeasurementListData", "MeasurementDescriptionListData"}},
+	"MOI":   {Functions: []string{"MeasurementListData", "MeasurementDescriptionListData"}},
+	"MOPVS": {Functions: []string{"MeasurementListData", "MeasurementDescriptionListData"}},
+	"OPEV": {Functions: []string{"LoadControlLimitListData", "LoadControlLimitDescriptionListData",
+		"LoadControlLimitConstraintsListData"}, EntityTypes: []string{"EV"}},
+	"DBEVC": {Functions: []string{"SetpointListData", "SetpointDescriptionListData",
+		"SetpointConstraintsListData"}, EntityTypes: []string{"EV"}},
 }
 
 // DetectUseCases parses nodeManagementUseCaseData from messages to identify

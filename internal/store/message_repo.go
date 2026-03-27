@@ -136,10 +136,16 @@ func (r *MessageRepo) GetMessage(traceID, msgID int64) (*model.Message, error) {
 // ftsPrefix converts a plain search string into an FTS5 prefix query so that
 // partial terms match. Each whitespace-separated token gets a trailing "*"
 // appended (e.g. "LoadContro" becomes "LoadContro*"), which makes FTS5 match
-// any token that starts with the given prefix.
+// any token that starts with the given prefix. FTS5 boolean operators (OR, AND,
+// NOT) are preserved so that queries like "LoadControl OR Setpoint" work.
 func ftsPrefix(search string) string {
 	words := strings.Fields(search)
 	for i, w := range words {
+		upper := strings.ToUpper(w)
+		if upper == "OR" || upper == "AND" || upper == "NOT" {
+			words[i] = upper
+			continue
+		}
 		if !strings.HasSuffix(w, "*") {
 			words[i] = w + "*"
 		}
@@ -223,6 +229,44 @@ func buildFilterQuery(traceID int64, filter MessageFilter) (ftsJoin string, cond
 	}
 
 	return ftsJoin, conditions, args
+}
+
+// ListMessageSummaries returns lightweight summaries for all messages matching the
+// filter. Unlike ListMessages, it selects only summary columns (no payloads) and
+// applies no LIMIT, making it suitable for virtual-scroll UIs that load the full
+// result set at once.
+func (r *MessageRepo) ListMessageSummaries(traceID int64, filter MessageFilter) ([]model.MessageSummary, error) {
+	ftsJoin, conditions, args := buildFilterQuery(traceID, filter)
+
+	selectCols := "m.id, m.trace_id, m.sequence_num, m.timestamp, m.direction, " +
+		"m.ship_msg_type, m.cmd_classifier, m.function_set, m.msg_counter, " +
+		"m.device_source, m.device_dest"
+
+	query := "SELECT " + selectCols + " FROM messages m " + ftsJoin +
+		"WHERE " + strings.Join(conditions, " AND ") +
+		" ORDER BY m.sequence_num ASC"
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list message summaries: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSummaries(rows)
+}
+
+func scanSummaries(rows *sql.Rows) ([]model.MessageSummary, error) {
+	var summaries []model.MessageSummary
+	for rows.Next() {
+		var s model.MessageSummary
+		if err := rows.Scan(&s.ID, &s.TraceID, &s.SequenceNum, &s.Timestamp, &s.Direction,
+			&s.ShipMsgType, &s.CmdClassifier, &s.FunctionSet, &s.MsgCounter,
+			&s.DeviceSource, &s.DeviceDest); err != nil {
+			return nil, fmt.Errorf("scan summary: %w", err)
+		}
+		summaries = append(summaries, s)
+	}
+	return summaries, rows.Err()
 }
 
 // ListMessages returns messages for a trace, with optional filtering and pagination.

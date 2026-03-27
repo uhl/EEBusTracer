@@ -107,7 +107,6 @@
 
     /* Theme-switchable component values */
     --inset-shadow: var(--inset-shadow);
-    --grid-line: rgba(255,255,255,0.02);
     --noise-opacity: 0.03;
     --scrollbar-thumb: rgba(212,160,83,0.2);
     --scrollbar-thumb-hover: rgba(212,160,83,0.4);
@@ -198,7 +197,6 @@
     --glow-accent-strong: 0 0 24px rgba(184,134,46,0.20);
 
     --inset-shadow: inset 0 1px 4px rgba(0,0,0,0.12);
-    --grid-line: rgba(0,0,0,0.03);
     --noise-opacity: 0.02;
     --scrollbar-thumb: rgba(184,134,46,0.25);
     --scrollbar-thumb-hover: rgba(184,134,46,0.45);
@@ -461,11 +459,7 @@ body {
     flex: 1;
     overflow: hidden;
     position: relative;
-    background:
-        linear-gradient(var(--grid-line) 1px, transparent 1px),
-        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-    background-size: 40px 40px;
-    background-color: var(--bg-primary);
+    background: var(--bg-primary);
 }
 
 /* --- Sidebar --- */
@@ -669,7 +663,7 @@ body {
     border-bottom: 1px solid var(--border);
     background: var(--bg-secondary);
     position: relative;
-    z-index: 10;
+    z-index: 20;
 }
 
 .trace-header h2 {
@@ -924,6 +918,12 @@ td.cmd-write   { color: var(--badge-write-fg); }
 td.cmd-call    { color: var(--badge-call-fg); }
 td.cmd-notify  { color: var(--badge-notify-fg); }
 
+/* Virtual scroll spacer rows — invisible height placeholders */
+.vs-spacer td {
+    border: none !important;
+    padding: 0 !important;
+}
+
 .msg-row {
     cursor: pointer;
     transition: background 0.1s, border-left 0.15s, transform 0.1s;
@@ -1118,6 +1118,16 @@ td.cmd-notify  { color: var(--badge-notify-fg); }
     font-size: 11px;
     width: 200px;
     box-shadow: var(--inset-shadow);
+}
+
+.toolbar-input-time {
+    width: 90px;
+}
+
+.toolbar-time-sep {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: 0 2px;
 }
 
 .toolbar-input-find {
@@ -2199,6 +2209,158 @@ td.cmd-notify  { color: var(--badge-notify-fg); }
     color: var(--warning);
 }
 
+.sub-rejected {
+    background: var(--badge-danger-bg);
+    color: var(--danger);
+}
+
+.sub-pending {
+    background: var(--badge-muted-bg);
+    color: var(--text-secondary);
+}
+
+/* --- Lifecycle Grouped-by-Device Cards --- */
+.lc-grid {
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+}
+
+.lc-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 0;
+}
+
+.lc-uc {
+    border-top: 1px solid var(--border);
+}
+
+.lc-uc:first-child {
+    border-top: none;
+}
+
+.lc-uc-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.lc-uc-header:hover {
+    background: var(--row-hover);
+}
+
+.lc-chevron {
+    font-size: 9px;
+    color: var(--text-muted);
+    transition: transform 0.15s;
+    flex-shrink: 0;
+}
+
+.lc-uc.open .lc-chevron {
+    transform: rotate(90deg);
+}
+
+.lc-dots {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.lc-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.lc-dot.sub-active { background: var(--success); }
+.lc-dot.sub-rejected { background: var(--danger); }
+.lc-dot.sub-stale { background: var(--warning); }
+.lc-dot.sub-pending { background: var(--text-muted); }
+.lc-dot.sub-removed { background: var(--border); }
+
+.lc-uc-body {
+    display: none;
+    padding: 4px 14px 10px;
+}
+
+.lc-uc.open .lc-uc-body {
+    display: block;
+}
+
+.lc-step {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 11px;
+    flex-wrap: wrap;
+}
+
+.lc-step-icon {
+    width: 14px;
+    flex-shrink: 0;
+    text-align: center;
+    font-weight: 700;
+    font-size: 12px;
+}
+
+.lc-step-icon-pass { color: var(--success); }
+.lc-step-icon-fail { color: var(--danger); }
+.lc-step-icon-partial { color: var(--warning); }
+.lc-step-icon-pending { color: var(--text-muted); }
+.lc-step-icon-na { color: var(--text-muted); }
+
+.lc-step-name {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.lc-step-details {
+    width: 100%;
+    padding-left: 20px;
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+/* --- Lifecycle Missing Items --- */
+.lc-missing {
+    margin-top: 4px;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 11px;
+    user-select: none;
+}
+
+.lc-missing-toggle {
+    display: inline-block;
+    font-size: 8px;
+    transition: transform 0.15s;
+}
+
+.lc-missing.open .lc-missing-toggle {
+    transform: rotate(90deg);
+}
+
+.lc-missing-list {
+    display: none;
+    margin: 4px 0 0 0;
+    padding-left: 16px;
+    list-style: disc;
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.lc-missing.open .lc-missing-list {
+    display: block;
+}
+
 .feature-addr {
     color: var(--text-muted);
     font-size: 11px;
@@ -2247,6 +2409,77 @@ td.cmd-notify  { color: var(--badge-notify-fg); }
     padding: 12px 0;
     margin-bottom: 16px;
     border-bottom: 1px solid var(--border);
+}
+
+/* --- Dependency Graph --- */
+/* --- Dependency Tree --- */
+.deptree-entity {
+    margin-top: 6px;
+    padding: 4px 0 4px 10px;
+    border-left: 2px solid var(--border);
+}
+.deptree-entity .entity-node-label {
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-primary);
+}
+.deptree-entity .feature-addr {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+.deptree-feature {
+    margin-top: 3px;
+    padding-left: 12px;
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+.deptree-feature-name {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.deptree-feature .feature-role {
+    color: var(--accent);
+    font-size: 10px;
+}
+.deptree-uc-list {
+    margin-left: 6px;
+}
+.deptree-uc-list .uc-pill {
+    font-size: 9px;
+    padding: 1px 5px;
+    margin-left: 2px;
+}
+.deptree-empty {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 4px 0;
+}
+.deptree-edges {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+}
+.deptree-edges-header {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    margin-top: 6px;
+}
+.deptree-edges-header:first-child {
+    margin-top: 0;
+}
+.deptree-edge-row {
+    font-size: 10px;
+    color: var(--text-secondary);
+    padding: 2px 0;
+}
+.deptree-arrow {
+    color: var(--text-muted);
+    margin: 0 2px;
 }
 
 /* --- Enriched Data Tables --- */

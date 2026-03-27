@@ -201,7 +201,14 @@ func (e *Engine) runSource(ctx context.Context, src Source) {
 		}
 	})
 
+	// Reset capturing state so a new capture can be started.
+	e.mu.Lock()
+	e.capturing = false
+	e.mu.Unlock()
+
 	if err != nil {
 		e.logger.Error("source stopped with error", "source", src.Name(), "error", err)
+	} else {
+		e.logger.Info("source stopped", "source", src.Name())
 	}
 }

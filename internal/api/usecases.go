@@ -84,8 +84,8 @@ func (s *Server) handleUseCaseContext(w http.ResponseWriter, r *http.Request) {
 
 	var result []UseCaseContext
 	for abbr, entry := range ucMap {
-		fsets := analysis.UseCaseFunctionSets[abbr]
-		if len(fsets) == 0 {
+		spec, ok := analysis.UseCaseFunctionSets[abbr]
+		if !ok || len(spec.Functions) == 0 {
 			continue
 		}
 		var devices []string
@@ -96,7 +96,7 @@ func (s *Server) handleUseCaseContext(w http.ResponseWriter, r *http.Request) {
 			Abbreviation: abbr,
 			Name:         entry.name,
 			Devices:      devices,
-			FunctionSets: fsets,
+			FunctionSets: spec.Functions,
 		})
 	}
 

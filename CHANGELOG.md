@@ -5,7 +5,115 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-03-27
+
+### Changed
+- Lifecycle checklist redesigned with grouped-by-device card layout: one card per
+  device with use cases listed inside, replacing the previous full-width expandable
+  rows; steps shown as compact icon+name lines with inline details for non-pass
+  steps; failed/partial use cases auto-expand; uses the same `intel-grid` card
+  pattern as the Dependencies tab
+- Lifecycle checklist details now list specific missing items for partial/fail
+  steps (e.g. "1 of 3 function sets discovered; missing:
+  LoadControlLimitDescriptionListData, LoadControlLimitConstraintsListData")
+  instead of just a count; applies to Feature Discovery, Subscriptions, and
+  Bindings steps
+- Feature discovery and dependency graph now filter by entity type (EVSE vs EV)
+  for accurate use case matching; LPC is matched only on EVSE entities, OPEV and
+  DBEVC only on EV entities, preventing incorrect cross-matching of use cases
+  that share the same SPINE function sets
+
+### Added
+- Intelligent DeviceConfiguration overview: `DeviceConfigurationKeyValueListData`
+  messages are decoded using the corresponding
+  `DeviceConfigurationKeyValueDescriptionListData` descriptions — the overview
+  shows human-readable key names, typed values (boolean, string, scaledNumber,
+  duration, etc.), units, and an isValueChangeable indicator; description messages
+  themselves render a summary table of key IDs, names, types, and units
+- Entity and feature addressing in message detail overview: SPINE data messages
+  now show an "Addressing" row with source/destination entity and feature
+  addresses (e.g. "Entity 1, Feature 7 → Entity 1, Feature 2")
+- **Use Case Lifecycle Checklist**: new "Lifecycle" tab on the Insights page
+  evaluates 5 setup steps per use case per device: SHIP handshake, feature
+  discovery, use case announced, subscriptions established, bindings established;
+  shows pass/fail/partial/pending/N/A status for each step with an overall
+  status badge; extensible — adding a new use case requires only a single map
+  entry in `UseCaseLifecycleSpecs`
+- `GET /api/traces/{id}/lifecycle` API endpoint: returns lifecycle checklist
+  results for all detected use cases per device
+- **Write Tracking**: new "Write Tracking" tab on the Insights page shows write
+  operations to LoadControlLimitListData and SetpointListData; displays effective
+  state cards (current value per limit/setpoint ID) and a chronological write
+  history table with result correlation (accepted/rejected/pending), latency, and
+  duration between successive writes to the same ID
+- `GET /api/traces/{id}/writetracking` API endpoint: returns write entries with
+  enriched labels from description data, correlated result status, and computed
+  durations
+- DBEVC (dynamicBidirectionalEvCharging) use case abbreviation and function set
+  mappings for OPEV and DBEVC
+- **Virtual scroll message table**: the message table now loads ALL matching
+  message summaries (~300 bytes each) into a client-side array and renders only
+  the visible rows using virtual scrolling; eliminates the 2000-message page
+  limit and "Load more" button, enabling smooth navigation of traces with
+  20k-100k+ messages
+- `GET /api/traces/{id}/messages/summaries` API endpoint: returns lightweight
+  message summaries (no payload fields) for all matching messages; supports the
+  same filter parameters as the existing messages endpoint
+- `MessageSummary` model type: compact projection of `Message` with `ToSummary()`
+  conversion method
+- On-demand detail loading with LRU cache: full message payloads are fetched
+  only when a row is selected, with a 50-entry cache for recently viewed messages
+- Loading and empty state indicators for the message table
+- Time range filter inputs in message toolbar: two compact time pickers
+  (from/to) let users jump directly to a specific time window without loading
+  all messages; when a time range is set, all matching messages are loaded at
+  once (bypassing pagination); supports overnight ranges (e.g. 23:00–02:00) by
+  auto-advancing the end date; uses the trace start date as the reference day
+- Boolean search operators: the Filter search field now supports FTS5 boolean
+  operators `OR`, `AND`, and `NOT` (e.g. "LoadControl OR Setpoint" matches
+  messages containing either term); operators are case-insensitive
+- **Dependency tree view**: new "Dependencies" tab on the Insights page shows
+  per-device entity/feature trees with use case pills on each feature; subscriptions
+  and bindings shown in card footers per device; replaces the previous Cytoscape.js
+  force-directed graph with a lightweight DOM tree that is easier to read and
+  matches the app's oscillograph theme
+- `GET /api/traces/{id}/depgraph` API endpoint: returns a dependency tree with
+  per-device entity/feature hierarchy, use case annotations per feature, and
+  subscription/binding edges
+
+### Changed
+- WebSocket broadcasts now send `MessageSummary` instead of full `Message`,
+  reducing bandwidth for live capture sessions
+- Find-in-view (Ctrl+F) now searches all messages in the virtual scroll data
+  array, not just the currently visible DOM rows
+- Jump-to-message (Ctrl+G) now searches the summary array by sequence number
+  or message counter
+- Keyboard navigation (j/k) uses virtual scroll index tracking instead of
+  DOM traversal
+- Bookmarks are rendered inline via the virtual scroll row renderer instead of
+  DOM ID lookups
+
+### Fixed
+- Messages duplicated on each new capture session: the WebSocket broadcast
+  callback was re-registered every time a capture started without clearing
+  previous callbacks, causing each message to be delivered N times after N
+  capture sessions; moved callback registration to server initialization so
+  it happens exactly once
+- Setpoint chart values always showing as 0: setpoint `write` messages (CEM
+  writing target values to EVSE) were filtered out because the setpoint
+  extraction descriptor only accepted `reply` and `notify` classifiers; now
+  includes `write` (same fix previously applied to load control)
+- Single-element data arrays in SPINE payloads silently dropped: when
+  `JsonFromEEBUSJson` normalization flattens a single-element array (e.g.
+  `setpointData` with one entry) to a plain object, the timeseries extractor
+  now falls back to parsing it as a single object instead of skipping it
+- Existing databases with v4 schema still had old setpoint chart definition
+  without `write` classifier; migration v6 updates the built-in Setpoints
+  chart definition in-place for databases that already ran v4
+
+### Removed
+- "Load more" button and offset-based pagination for message table (replaced
+  by virtual scroll loading all summaries at once)
 
 ## [0.5.0] - 2026-03-19
 

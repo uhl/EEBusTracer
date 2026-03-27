@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/eebustracer/eebustracer/internal/store"
 )
@@ -150,6 +151,9 @@ func parseDiscoveryEntities(spinePayload json.RawMessage) []EntityInfoResult {
 			continue
 		}
 
+		// SPINE spec: supportedFunction is inside description
+		// (NetworkManagementFeatureDescriptionDataType), not at the
+		// featureInformation level.
 		var discovery struct {
 			EntityInformation []struct {
 				Description *struct {
@@ -166,14 +170,14 @@ func parseDiscoveryEntities(spinePayload json.RawMessage) []EntityInfoResult {
 						Entity  json.RawMessage `json:"entity"`
 						Feature *int            `json:"feature"`
 					} `json:"featureAddress"`
-					FeatureType *string `json:"featureType"`
-					Role        *string `json:"role"`
-					Description *string `json:"description"`
+					FeatureType       *string `json:"featureType"`
+					Role              *string `json:"role"`
+					Description       *string `json:"description"`
+					SupportedFunction []struct {
+						Function           *string     `json:"function"`
+						PossibleOperations interface{} `json:"possibleOperations"`
+					} `json:"supportedFunction"`
 				} `json:"description"`
-				SupportedFunction []struct {
-					Function        *string `json:"function"`
-					PossibleOperations interface{} `json:"possibleOperations"`
-				} `json:"supportedFunction"`
 			} `json:"featureInformation"`
 		}
 		if err := json.Unmarshal(raw, &discovery); err != nil {
@@ -203,7 +207,7 @@ func parseDiscoveryEntities(spinePayload json.RawMessage) []EntityInfoResult {
 			}
 			feature := FeatureInfoResult{}
 			if fi.Description.FeatureAddress.Feature != nil {
-				feature.Address = json.Number(json.Number(string(rune('0' + *fi.Description.FeatureAddress.Feature)))).String()
+				feature.Address = strconv.Itoa(*fi.Description.FeatureAddress.Feature)
 			}
 			if fi.Description.FeatureType != nil {
 				feature.FeatureType = *fi.Description.FeatureType
@@ -211,7 +215,7 @@ func parseDiscoveryEntities(spinePayload json.RawMessage) []EntityInfoResult {
 			if fi.Description.Role != nil {
 				feature.Role = *fi.Description.Role
 			}
-			for _, sf := range fi.SupportedFunction {
+			for _, sf := range fi.Description.SupportedFunction {
 				if sf.Function != nil {
 					feature.Functions = append(feature.Functions, *sf.Function)
 				}

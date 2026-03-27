@@ -2,20 +2,16 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
+	"github.com/eebustracer/eebustracer/internal/model"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
-func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
-	traceID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid trace ID")
-		return
-	}
-
-	q := r.URL.Query()
+// buildMessageFilter constructs a MessageFilter from URL query parameters.
+func buildMessageFilter(q url.Values) store.MessageFilter {
 	filter := store.MessageFilter{
 		CmdClassifier: q.Get("cmdClassifier"),
 		FunctionSet:   q.Get("functionSet"),
@@ -46,6 +42,17 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 			filter.TimeTo = &t
 		}
 	}
+	return filter
+}
+
+func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
+	traceID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid trace ID")
+		return
+	}
+
+	filter := buildMessageFilter(r.URL.Query())
 
 	messages, err := s.msgRepo.ListMessages(traceID, filter)
 	if err != nil {
@@ -68,6 +75,32 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Unfiltered-Count", strconv.Itoa(unfilteredCount))
 
 	writeJSON(w, http.StatusOK, messages)
+}
+
+func (s *Server) handleListMessageSummaries(w http.ResponseWriter, r *http.Request) {
+	traceID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid trace ID")
+		return
+	}
+
+	filter := buildMessageFilter(r.URL.Query())
+	// Summaries load all matching rows; ignore limit/offset from query.
+	filter.Limit = 0
+	filter.Offset = 0
+
+	summaries, err := s.msgRepo.ListMessageSummaries(traceID, filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Return empty array instead of null
+	if summaries == nil {
+		summaries = []model.MessageSummary{}
+	}
+
+	writeJSON(w, http.StatusOK, summaries)
 }
 
 func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {

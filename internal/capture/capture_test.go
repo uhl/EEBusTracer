@@ -345,6 +345,74 @@ func TestEngine_CallbackHasDBID(t *testing.T) {
 	}
 }
 
+func TestEngine_CallbackNotDuplicated(t *testing.T) {
+	engine, _ := setupEngine(t)
+
+	// Register ONE callback (simulating what NewServer does once).
+	var callCount int
+	var mu sync.Mutex
+	engine.OnMessage(func(msg *model.Message) {
+		mu.Lock()
+		callCount++
+		mu.Unlock()
+	})
+
+	waitForCount := func(want int) {
+		deadline := time.After(2 * time.Second)
+		for {
+			mu.Lock()
+			n := callCount
+			mu.Unlock()
+			if n >= want {
+				return
+			}
+			select {
+			case <-deadline:
+				t.Fatalf("timeout waiting for count >= %d, got %d", want, n)
+			default:
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}
+
+	makeSource := func() *mockSource {
+		return &mockSource{
+			name: "test",
+			messages: []*model.Message{
+				{ShipMsgType: model.ShipMsgTypeData, Direction: model.DirectionIncoming, Timestamp: time.Now()},
+			},
+		}
+	}
+
+	// Session 1: expect exactly 1 callback invocation.
+	if err := engine.StartWithSource(1, makeSource(), ""); err != nil {
+		t.Fatalf("session 1 start: %v", err)
+	}
+	waitForCount(1)
+	engine.Stop()
+
+	// Session 2: expect exactly 2 total (1 per session, not duplicated).
+	if err := engine.StartWithSource(1, makeSource(), ""); err != nil {
+		t.Fatalf("session 2 start: %v", err)
+	}
+	waitForCount(2)
+	engine.Stop()
+
+	// Session 3: expect exactly 3 total.
+	if err := engine.StartWithSource(1, makeSource(), ""); err != nil {
+		t.Fatalf("session 3 start: %v", err)
+	}
+	waitForCount(3)
+	engine.Stop()
+
+	mu.Lock()
+	defer mu.Unlock()
+	// If the callback were duplicated, we'd see 6 (1+2+3) instead of 3.
+	if callCount != 3 {
+		t.Errorf("callback fired %d times across 3 sessions, want 3 (one per message)", callCount)
+	}
+}
+
 func TestEngine_DoubleStart(t *testing.T) {
 	engine, _ := setupEngine(t)
 

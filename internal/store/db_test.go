@@ -50,14 +50,14 @@ func TestMigrate(t *testing.T) {
 		t.Errorf("chart_definitions table not found: %v", err)
 	}
 
-	// Verify schema version is 5
+	// Verify schema version is 6
 	var version int
 	err = db.SqlDB().QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
 	if err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("schema version = %d, want 5", version)
+	if version != 6 {
+		t.Errorf("schema version = %d, want 6", version)
 	}
 
 	// Verify V5 correlation indexes exist
