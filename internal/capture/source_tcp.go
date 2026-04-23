@@ -236,13 +236,13 @@ func (s *TCPSource) emitMessage(timeStr, direction, peer, jsonPayload string, ba
 		Timestamp:      ts,
 		Direction:      dir,
 		NormalizedJSON: json.RawMessage(normalized),
-		ShipMsgType:    model.ShipMsgTypeData,
 	}
 
 	peerDevice := parser.ExtractPeerDevice(peer)
 
 	spineMsg := s.parser.ParseSpineFromJSON(normalized)
 	if spineMsg != nil {
+		msg.ShipMsgType = model.ShipMsgTypeData
 		msg.SpinePayload = spineMsg.SpinePayload
 		msg.CmdClassifier = spineMsg.CmdClassifier
 		msg.FunctionSet = spineMsg.FunctionSet
@@ -255,11 +255,31 @@ func (s *TCPSource) emitMessage(timeStr, direction, peer, jsonPayload string, ba
 		msg.FeatureSource = spineMsg.FeatureSource
 		msg.FeatureDest = spineMsg.FeatureDest
 	} else {
-		msg.ParseError = "could not parse SPINE datagram from log line"
-		if dir == model.DirectionOutgoing {
-			msg.DeviceDest = peerDevice
+		shipResult, err := s.parser.ParseShipFromJSON(normalized)
+		if err == nil {
+			msg.ShipMsgType = shipResult.ShipMsgType
+			msg.ShipPayload = shipResult.ShipPayload
+			if shipResult.Spine != nil {
+				msg.SpinePayload = shipResult.Spine.SpinePayload
+				msg.CmdClassifier = shipResult.Spine.CmdClassifier
+				msg.FunctionSet = shipResult.Spine.FunctionSet
+				msg.MsgCounter = shipResult.Spine.MsgCounter
+				msg.MsgCounterRef = shipResult.Spine.MsgCounterRef
+				msg.DeviceSource = shipResult.Spine.DeviceSource
+				msg.DeviceDest = shipResult.Spine.DeviceDest
+				msg.EntitySource = shipResult.Spine.EntitySource
+				msg.EntityDest = shipResult.Spine.EntityDest
+				msg.FeatureSource = shipResult.Spine.FeatureSource
+				msg.FeatureDest = shipResult.Spine.FeatureDest
+			}
 		} else {
-			msg.DeviceSource = peerDevice
+			msg.ShipMsgType = model.ShipMsgTypeUnknown
+			msg.ParseError = "could not parse message: " + err.Error()
+			if dir == model.DirectionOutgoing {
+				msg.DeviceDest = peerDevice
+			} else {
+				msg.DeviceSource = peerDevice
+			}
 		}
 	}
 
