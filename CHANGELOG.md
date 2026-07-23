@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-23
+
 ### Added
 - **Live DLT capture**: new "DLT" mode in the capture control connects to a
   dlt-daemon TCP listener (default port 3490) and streams EEBus messages into

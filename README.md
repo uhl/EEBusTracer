@@ -63,9 +63,10 @@ sighed at a 400-line `nodeManagementDetailedDiscoveryData` reply.
 
 ## Status
 
-Actively developed. Latest release **v0.6.0**; recent unreleased work adds
-DLT text + binary import, live DLT streaming with APID/CTID filtering, and
-live truncation counters. See [CHANGELOG.md](CHANGELOG.md).
+Actively developed. Latest release **v0.7.0** — adds live DLT capture,
+DLT text/binary file import, message flow view (sequence diagram), LPC
+conformance checks, dependency tree, and write tracking. See
+[CHANGELOG.md](CHANGELOG.md).
 
 ---
 
