@@ -87,7 +87,7 @@ func BuildDependencyTree(
 	for _, dev := range devices {
 		dt := DeviceTree{
 			DeviceAddr: dev.DeviceAddr,
-			ShortName:  shortDeviceAddr(dev.DeviceAddr),
+			ShortName:  ShortDeviceName(dev.DeviceAddr),
 			Entities:   []EntityTree{},
 		}
 
@@ -156,12 +156,28 @@ func BuildDependencyTree(
 	return tree
 }
 
-// shortDeviceAddr extracts a short name from a device address.
+// ShortDeviceName extracts a short name from a device address.
 // e.g., "d:_i:37916_CEM-400000270" → "CEM-400000270"
-func shortDeviceAddr(addr string) string {
+// For IP:port addresses like "192.168.1.1:4712", it strips the port.
+func ShortDeviceName(addr string) string {
+	// EEBus device address: split on underscore
 	for i := len(addr) - 1; i >= 0; i-- {
 		if addr[i] == '_' {
 			return addr[i+1:]
+		}
+	}
+	// IP:port — strip port by finding the last colon after the last ']' (IPv6)
+	// or the last colon for IPv4.
+	if bracketIdx := strings.LastIndex(addr, "]"); bracketIdx >= 0 {
+		// IPv6 with brackets: [::1]:4712 → [::1]
+		if colonIdx := strings.Index(addr[bracketIdx:], ":"); colonIdx >= 0 {
+			return addr[:bracketIdx+colonIdx]
+		}
+	} else if colonIdx := strings.LastIndex(addr, ":"); colonIdx >= 0 {
+		// Check it looks like host:port (port is numeric)
+		port := addr[colonIdx+1:]
+		if port != "" && port[0] >= '0' && port[0] <= '9' {
+			return addr[:colonIdx]
 		}
 	}
 	return addr

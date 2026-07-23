@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eebustracer/eebustracer/internal/model"
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -226,7 +227,7 @@ func (s *Server) handleChartData(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		desc := ExtractionDescriptor{
+		desc := spineparse.ExtractionDescriptor{
 			CmdKey:       src.CmdKey,
 			DataArrayKey: src.DataArrayKey,
 			IDField:      src.IDField,

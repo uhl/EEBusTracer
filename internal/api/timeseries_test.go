@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eebustracer/eebustracer/internal/model"
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -70,7 +71,7 @@ func TestScaledNumberToFloat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := scaledNumberToFloat(json.RawMessage(tt.input))
+			got, ok := spineparse.ScaledNumberToFloat(json.RawMessage(tt.input))
 			if ok != tt.wantOK {
 				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
 			}
@@ -85,7 +86,7 @@ func TestScaledNumberToFloat(t *testing.T) {
 func TestExtractGenericData(t *testing.T) {
 	tests := []struct {
 		name     string
-		desc     ExtractionDescriptor
+		desc     spineparse.ExtractionDescriptor
 		payload  string
 		wantLen  int
 		wantID   string
@@ -244,7 +245,7 @@ func TestExtractGenericData(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			items := extractGenericData(json.RawMessage(tt.payload), tt.desc)
+			items := spineparse.ExtractGenericData(json.RawMessage(tt.payload), tt.desc)
 			if len(items) != tt.wantLen {
 				t.Fatalf("expected %d items, got %d", tt.wantLen, len(items))
 			}
@@ -269,7 +270,7 @@ func TestExtractGenericData_IsActive(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		desc       ExtractionDescriptor
+		desc       spineparse.ExtractionDescriptor
 		payload    string
 		wantLen    int
 		wantActive []*bool // expected IsActive per item
@@ -344,7 +345,7 @@ func TestExtractGenericData_IsActive(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			items := extractGenericData(json.RawMessage(tt.payload), tt.desc)
+			items := spineparse.ExtractGenericData(json.RawMessage(tt.payload), tt.desc)
 			if len(items) != tt.wantLen {
 				t.Fatalf("expected %d items, got %d", tt.wantLen, len(items))
 			}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -190,7 +191,7 @@ func hasScaledNumberValues(dataArray []map[string]json.RawMessage) bool {
 		if !ok {
 			continue
 		}
-		if _, ok := scaledNumberToFloat(raw); ok {
+		if _, ok := spineparse.ScaledNumberToFloat(raw); ok {
 			return true
 		}
 	}

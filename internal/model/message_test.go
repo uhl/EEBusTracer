@@ -66,11 +66,20 @@ func TestMessage_ToSummary(t *testing.T) {
 	if s.MsgCounter != msg.MsgCounter {
 		t.Errorf("MsgCounter = %q, want %q", s.MsgCounter, msg.MsgCounter)
 	}
+	if s.MsgCounterRef != msg.MsgCounterRef {
+		t.Errorf("MsgCounterRef = %q, want %q", s.MsgCounterRef, msg.MsgCounterRef)
+	}
 	if s.DeviceSource != msg.DeviceSource {
 		t.Errorf("DeviceSource = %q, want %q", s.DeviceSource, msg.DeviceSource)
 	}
 	if s.DeviceDest != msg.DeviceDest {
 		t.Errorf("DeviceDest = %q, want %q", s.DeviceDest, msg.DeviceDest)
+	}
+	if s.SourceAddr != msg.SourceAddr {
+		t.Errorf("SourceAddr = %q, want %q", s.SourceAddr, msg.SourceAddr)
+	}
+	if s.DestAddr != msg.DestAddr {
+		t.Errorf("DestAddr = %q, want %q", s.DestAddr, msg.DestAddr)
 	}
 }
 

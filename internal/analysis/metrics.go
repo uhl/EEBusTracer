@@ -77,10 +77,24 @@ func devicePairFromMsg(msg *model.Message) (pairKey, bool) {
 
 // --- heartbeat computation ---
 
-func computeHeartbeatJitter(msgs []*model.Message) []HeartbeatJitter {
-	// Collect heartbeat timestamps per pair
-	heartbeats := map[pairKey][]time.Time{}
-	pairOrder := []pairKey{}
+// heartbeatGap is one interval between consecutive heartbeats on a device pair.
+// Carries the bracketing message IDs so callers can cite specific evidence.
+type heartbeatGap struct {
+	FromID, ToID int64
+	From, To     time.Time
+	Duration     time.Duration
+}
+
+// collectHeartbeatGapsByPair walks the message stream and returns the gaps
+// between consecutive heartbeats per directional device pair, in insertion
+// order. Pairs with fewer than 2 heartbeats are omitted.
+func collectHeartbeatGapsByPair(msgs []*model.Message) (order []pairKey, gaps map[pairKey][]heartbeatGap) {
+	type point struct {
+		ts time.Time
+		id int64
+	}
+	points := map[pairKey][]point{}
+	order = []pairKey{}
 
 	for _, msg := range msgs {
 		if msg.FunctionSet != "DeviceDiagnosisHeartbeatData" {
@@ -90,33 +104,51 @@ func computeHeartbeatJitter(msgs []*model.Message) []HeartbeatJitter {
 		if !ok {
 			continue
 		}
-		if _, exists := heartbeats[pair]; !exists {
-			pairOrder = append(pairOrder, pair)
+		if _, exists := points[pair]; !exists {
+			order = append(order, pair)
 		}
-		heartbeats[pair] = append(heartbeats[pair], msg.Timestamp)
+		points[pair] = append(points[pair], point{ts: msg.Timestamp, id: msg.ID})
 	}
 
-	var results []HeartbeatJitter
-	for _, pair := range pairOrder {
-		timestamps := heartbeats[pair]
-		if len(timestamps) < 2 {
+	gaps = map[pairKey][]heartbeatGap{}
+	for _, pair := range order {
+		pts := points[pair]
+		if len(pts) < 2 {
 			continue
 		}
+		for i := 1; i < len(pts); i++ {
+			gaps[pair] = append(gaps[pair], heartbeatGap{
+				FromID:   pts[i-1].id,
+				ToID:     pts[i].id,
+				From:     pts[i-1].ts,
+				To:       pts[i].ts,
+				Duration: pts[i].ts.Sub(pts[i-1].ts),
+			})
+		}
+	}
+	return order, gaps
+}
 
-		intervals := make([]float64, len(timestamps)-1)
-		for i := 1; i < len(timestamps); i++ {
-			intervals[i-1] = float64(timestamps[i].Sub(timestamps[i-1]).Milliseconds())
+func computeHeartbeatJitter(msgs []*model.Message) []HeartbeatJitter {
+	order, gaps := collectHeartbeatGapsByPair(msgs)
+
+	var results []HeartbeatJitter
+	for _, pair := range order {
+		pairGaps, ok := gaps[pair]
+		if !ok || len(pairGaps) == 0 {
+			continue
 		}
 
 		jitter := HeartbeatJitter{
 			DevicePair:  pairKeyStr(pair),
-			SampleCount: len(intervals),
-			MinMs:       intervals[0],
-			MaxMs:       intervals[0],
+			SampleCount: len(pairGaps),
+			MinMs:       float64(pairGaps[0].Duration.Milliseconds()),
+			MaxMs:       float64(pairGaps[0].Duration.Milliseconds()),
 		}
 
 		sum := 0.0
-		for _, iv := range intervals {
+		for _, g := range pairGaps {
+			iv := float64(g.Duration.Milliseconds())
 			sum += iv
 			if iv < jitter.MinMs {
 				jitter.MinMs = iv
@@ -125,15 +157,14 @@ func computeHeartbeatJitter(msgs []*model.Message) []HeartbeatJitter {
 				jitter.MaxMs = iv
 			}
 		}
-		jitter.MeanMs = sum / float64(len(intervals))
+		jitter.MeanMs = sum / float64(len(pairGaps))
 
-		// Standard deviation
 		sumSq := 0.0
-		for _, iv := range intervals {
-			diff := iv - jitter.MeanMs
+		for _, g := range pairGaps {
+			diff := float64(g.Duration.Milliseconds()) - jitter.MeanMs
 			sumSq += diff * diff
 		}
-		jitter.StdDevMs = math.Sqrt(sumSq / float64(len(intervals)))
+		jitter.StdDevMs = math.Sqrt(sumSq / float64(len(pairGaps)))
 
 		results = append(results, jitter)
 	}

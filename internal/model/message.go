@@ -18,8 +18,11 @@ type MessageSummary struct {
 	CmdClassifier string    `json:"cmdClassifier,omitempty"`
 	FunctionSet   string    `json:"functionSet,omitempty"`
 	MsgCounter    string    `json:"msgCounter,omitempty"`
+	MsgCounterRef string    `json:"msgCounterRef,omitempty"`
 	DeviceSource  string    `json:"deviceSource,omitempty"`
 	DeviceDest    string    `json:"deviceDest,omitempty"`
+	SourceAddr    string    `json:"sourceAddr,omitempty"`
+	DestAddr      string    `json:"destAddr,omitempty"`
 }
 
 // Message represents a decoded EEBus protocol message.
@@ -62,7 +65,10 @@ func (m *Message) ToSummary() MessageSummary {
 		CmdClassifier: m.CmdClassifier,
 		FunctionSet:   m.FunctionSet,
 		MsgCounter:    m.MsgCounter,
+		MsgCounterRef: m.MsgCounterRef,
 		DeviceSource:  m.DeviceSource,
 		DeviceDest:    m.DeviceDest,
+		SourceAddr:    m.SourceAddr,
+		DestAddr:      m.DestAddr,
 	}
 }

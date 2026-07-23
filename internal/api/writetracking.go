@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eebustracer/eebustracer/internal/model"
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -59,7 +60,7 @@ func (s *Server) handleWriteTracking(w http.ResponseWriter, r *http.Request) {
 	// Collect write-capable descriptors from builtInDescriptors
 	type writeDesc struct {
 		name string
-		desc ExtractionDescriptor
+		desc spineparse.ExtractionDescriptor
 		fs   string
 	}
 	var writeDescs []writeDesc
@@ -112,7 +113,7 @@ func (s *Server) handleWriteTracking(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			items := extractGenericData(msg.SpinePayload, wd.desc)
+			items := spineparse.ExtractGenericData(msg.SpinePayload, wd.desc)
 			for _, item := range items {
 				entry := WriteEntry{
 					Timestamp: msg.Timestamp,
@@ -187,7 +188,7 @@ func correlateWriteResult(s *Server, traceID int64, msg *model.Message) (result 
 	}
 
 	for _, ref := range refs {
-		status := extractResultStatus(ref.SpinePayload)
+		status := spineparse.ExtractResultStatus(ref.SpinePayload)
 		if status != "" {
 			latency := computeLatencyMs(msg, ref)
 			return status, latency

@@ -456,6 +456,32 @@ func TestBuildDependencyTree_EntityTypeFiltering(t *testing.T) {
 	}
 }
 
+func TestShortDeviceName(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		want string
+	}{
+		{name: "full EEBus address", addr: "d:_i:37916_CEM-400000270", want: "CEM-400000270"},
+		{name: "short address with underscore", addr: "d:_i:19667_HEMS", want: "HEMS"},
+		{name: "single segment no underscore", addr: "deviceA", want: "deviceA"},
+		{name: "empty string", addr: "", want: ""},
+		{name: "trailing underscore segment", addr: "prefix_suffix", want: "suffix"},
+		{name: "IP:port address", addr: "192.168.1.1:4712", want: "192.168.1.1"},
+		{name: "IPv6 address with port", addr: "[::1]:4712", want: "[::1]"},
+		{name: "IP without port", addr: "192.168.1.1", want: "192.168.1.1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ShortDeviceName(tt.addr)
+			if got != tt.want {
+				t.Errorf("ShortDeviceName(%q) = %q, want %q", tt.addr, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- helpers ---
 
 func filterDepEdgesByType(edges []DepEdge, edgeType string) []DepEdge {

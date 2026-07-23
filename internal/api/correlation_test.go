@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eebustracer/eebustracer/internal/model"
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -112,9 +113,9 @@ func TestExtractResultStatus(t *testing.T) {
 			if tt.payload != "" {
 				payload = json.RawMessage(tt.payload)
 			}
-			got := extractResultStatus(payload)
+			got := spineparse.ExtractResultStatus(payload)
 			if got != tt.want {
-				t.Errorf("extractResultStatus() = %q, want %q", got, tt.want)
+				t.Errorf("ExtractResultStatus() = %q, want %q", got, tt.want)
 			}
 		})
 	}

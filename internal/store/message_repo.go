@@ -239,8 +239,8 @@ func (r *MessageRepo) ListMessageSummaries(traceID int64, filter MessageFilter) 
 	ftsJoin, conditions, args := buildFilterQuery(traceID, filter)
 
 	selectCols := "m.id, m.trace_id, m.sequence_num, m.timestamp, m.direction, " +
-		"m.ship_msg_type, m.cmd_classifier, m.function_set, m.msg_counter, " +
-		"m.device_source, m.device_dest"
+		"m.ship_msg_type, m.cmd_classifier, m.function_set, m.msg_counter, m.msg_counter_ref, " +
+		"m.device_source, m.device_dest, m.source_addr, m.dest_addr"
 
 	query := "SELECT " + selectCols + " FROM messages m " + ftsJoin +
 		"WHERE " + strings.Join(conditions, " AND ") +
@@ -260,8 +260,8 @@ func scanSummaries(rows *sql.Rows) ([]model.MessageSummary, error) {
 	for rows.Next() {
 		var s model.MessageSummary
 		if err := rows.Scan(&s.ID, &s.TraceID, &s.SequenceNum, &s.Timestamp, &s.Direction,
-			&s.ShipMsgType, &s.CmdClassifier, &s.FunctionSet, &s.MsgCounter,
-			&s.DeviceSource, &s.DeviceDest); err != nil {
+			&s.ShipMsgType, &s.CmdClassifier, &s.FunctionSet, &s.MsgCounter, &s.MsgCounterRef,
+			&s.DeviceSource, &s.DeviceDest, &s.SourceAddr, &s.DestAddr); err != nil {
 			return nil, fmt.Errorf("scan summary: %w", err)
 		}
 		summaries = append(summaries, s)

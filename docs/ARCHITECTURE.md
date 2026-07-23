@@ -122,6 +122,7 @@ internal/api/          Web interface backend
                        - writetracking.go: write tracking API handler
                          (extracts LoadControl/Setpoint writes, correlates results,
                          computes durations, builds effective state)
+                       - flow.go: flow participants and correlations API handlers
                        - lifecycle.go: use case lifecycle checklist API handler
                          (evaluates 5 setup steps per device+UC pair)
                        - hub.go: WebSocket fan-out hub with typed events
@@ -140,6 +141,8 @@ internal/analysis/     Protocol intelligence and analysis
                        - depgraph.go: dependency tree builder
                          (use cases → devices → entities → features,
                          subscription/binding edges)
+                       - flow.go: message flow analysis
+                         (ExtractFlowParticipants, BuildCorrelationPairs)
                        - lifecycle.go: lifecycle spec map + evaluator
                          (5-step checklist per device+UC pair)
 
@@ -166,6 +169,9 @@ web/                   Frontend assets (embedded via embed.FS)
                        - static/js/intelligence.js: protocol intelligence page
                          (use cases, subscriptions, heartbeat accuracy,
                          dependency tree, write tracking, lifecycle checklist)
+                       - static/js/flow.js: FlowView class — canvas-based
+                         sequence diagram with swimlane overview, virtual
+                         scroll, correlation arrows, device lifelines
                        - static/js/virtual-scroll.js: virtual scroll engine
                          for message table (renders only visible rows)
                        - static/js/vendor/: Chart.js v4,
@@ -220,6 +226,13 @@ Browser → GET /api/traces/{id}/messages/summaries?search=Measurement&cmdClassi
   → GET /api/traces/{id}/usecase-context
   → Detected use cases with associated devices and SPINE function sets
   → Frontend dropdown filters message table by use case context
+
+  Flow view:
+  → GET /api/traces/{id}/flow/participants
+  → ExtractFlowParticipants from summaries (unique devices, first-appearance order)
+  → GET /api/traces/{id}/flow/correlations
+  → BuildCorrelationPairs (msgCounter→msgCounterRef matching, latency, relationship)
+  → Frontend FlowView renders canvas sequence diagram + swimlane overview
 ```
 
 ### Device Discovery

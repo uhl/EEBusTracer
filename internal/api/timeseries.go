@@ -1,13 +1,12 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
-	"math"
 	"net/http"
 	"time"
 
 	"github.com/eebustracer/eebustracer/internal/model"
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -33,32 +32,14 @@ type TimeseriesResponse struct {
 	Series []TimeseriesSeries `json:"series"`
 }
 
-// ExtractionDescriptor parameterizes the generic extraction of timeseries data
-// from SPINE payloads. Each descriptor identifies which JSON keys to look for
-// within the cmd array and how to find the ID and value fields.
-type ExtractionDescriptor struct {
-	CmdKey       string   // top-level cmd key, e.g. "measurementListData"
-	DataArrayKey string   // nested array key, e.g. "measurementData"
-	IDField      string   // ID field name, e.g. "measurementId"
-	Classifiers  []string // accepted cmdClassifier values
-	ActiveField  string   // optional boolean field, e.g. "isLimitActive"
-}
-
 // SeriesLabel provides label and unit for a timeseries series.
 type SeriesLabel struct {
 	Label string
 	Unit  string
 }
 
-// GenericDataItem is a single extracted data point (ID + value).
-type GenericDataItem struct {
-	ID       string
-	Value    float64
-	IsActive *bool
-}
-
 // builtInDescriptors maps the known timeseries type names to their extraction descriptors.
-var builtInDescriptors = map[string]ExtractionDescriptor{
+var builtInDescriptors = map[string]spineparse.ExtractionDescriptor{
 	"measurement": {
 		CmdKey:       "measurementListData",
 		DataArrayKey: "measurementData",
@@ -177,146 +158,9 @@ func (s *Server) buildLabelsForType(dataType string, traceID int64) map[string]S
 	return labels
 }
 
-// scaledNumberToFloat converts a SPINE ScaledNumber to a float64.
-// ScaledNumber has {"number": N, "scale": S} meaning N * 10^S.
-func scaledNumberToFloat(raw json.RawMessage) (float64, bool) {
-	var sn struct {
-		Number *float64 `json:"number"`
-		Scale  *int     `json:"scale"`
-	}
-	if err := json.Unmarshal(raw, &sn); err != nil || sn.Number == nil {
-		return 0, false
-	}
-	scale := 0
-	if sn.Scale != nil {
-		scale = *sn.Scale
-	}
-	return *sn.Number * math.Pow(10, float64(scale)), true
-}
-
-// extractCmdArray extracts the cmd array from a SPINE datagram payload.
-// It handles both array and single-object forms of the cmd field (EEBUS
-// normalization may flatten single-element arrays to plain objects).
-func extractCmdArray(spinePayload json.RawMessage) ([]json.RawMessage, error) {
-	var dg struct {
-		Datagram struct {
-			Payload struct {
-				Cmd []json.RawMessage `json:"cmd"`
-			} `json:"payload"`
-		} `json:"datagram"`
-	}
-	if err := json.Unmarshal(spinePayload, &dg); err == nil && len(dg.Datagram.Payload.Cmd) > 0 {
-		return dg.Datagram.Payload.Cmd, nil
-	}
-
-	// Fallback: cmd as a single object instead of an array
-	var dgSingle struct {
-		Datagram struct {
-			Payload struct {
-				Cmd json.RawMessage `json:"cmd"`
-			} `json:"payload"`
-		} `json:"datagram"`
-	}
-	if err := json.Unmarshal(spinePayload, &dgSingle); err != nil {
-		return nil, err
-	}
-	trimmed := bytes.TrimSpace(dgSingle.Datagram.Payload.Cmd)
-	if len(trimmed) > 0 && trimmed[0] == '{' {
-		return []json.RawMessage{dgSingle.Datagram.Payload.Cmd}, nil
-	}
-
-	return nil, nil
-}
-
-// extractGenericData extracts ID/value pairs from a SPINE payload using the
-// given ExtractionDescriptor. This is the single parameterized replacement for
-// extractMeasurementData, extractLoadControlData, and extractSetpointData.
-func extractGenericData(spinePayload json.RawMessage, desc ExtractionDescriptor) []GenericDataItem {
-	cmds, err := extractCmdArray(spinePayload)
-	if err != nil {
-		return nil
-	}
-
-	var items []GenericDataItem
-	for _, cmd := range cmds {
-		var cmdMap map[string]json.RawMessage
-		if err := json.Unmarshal(cmd, &cmdMap); err != nil {
-			continue
-		}
-
-		raw, ok := cmdMap[desc.CmdKey]
-		if !ok {
-			continue
-		}
-
-		// Parse the list data as a map to find the array key dynamically
-		var listData map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &listData); err != nil {
-			continue
-		}
-
-		arrayRaw, ok := listData[desc.DataArrayKey]
-		if !ok {
-			continue
-		}
-
-		// Parse the array as a slice of generic objects.
-		// NormalizeEEBUSJSON may flatten single-element arrays to plain objects,
-		// so fall back to wrapping a single object in a slice.
-		var dataArray []map[string]json.RawMessage
-		if err := json.Unmarshal(arrayRaw, &dataArray); err != nil {
-			var single map[string]json.RawMessage
-			if err := json.Unmarshal(arrayRaw, &single); err != nil {
-				continue
-			}
-			dataArray = []map[string]json.RawMessage{single}
-		}
-
-		for _, entry := range dataArray {
-			idRaw, ok := entry[desc.IDField]
-			if !ok {
-				continue
-			}
-
-			// Parse ID as json.Number to get a string representation
-			var id json.Number
-			if err := json.Unmarshal(idRaw, &id); err != nil {
-				continue
-			}
-
-			valueRaw, ok := entry["value"]
-			if !ok {
-				continue
-			}
-
-			val, ok := scaledNumberToFloat(valueRaw)
-			if !ok {
-				continue
-			}
-
-			item := GenericDataItem{
-				ID:    id.String(),
-				Value: val,
-			}
-
-			if desc.ActiveField != "" {
-				if activeRaw, exists := entry[desc.ActiveField]; exists {
-					var active bool
-					if err := json.Unmarshal(activeRaw, &active); err == nil {
-						item.IsActive = &active
-					}
-				}
-			}
-
-			items = append(items, item)
-		}
-	}
-	return items
-}
-
 // extractGenericSeries builds timeseries from messages using a generic extraction descriptor.
 // labels provides label/unit enrichment by ID. filterID, if non-empty, limits to a single series.
-func extractGenericSeries(msgs []*model.Message, desc ExtractionDescriptor, labels map[string]SeriesLabel, filterID string) []TimeseriesSeries {
+func extractGenericSeries(msgs []*model.Message, desc spineparse.ExtractionDescriptor, labels map[string]SeriesLabel, filterID string) []TimeseriesSeries {
 	classifierSet := make(map[string]bool, len(desc.Classifiers))
 	for _, c := range desc.Classifiers {
 		classifierSet[c] = true
@@ -333,7 +177,7 @@ func extractGenericSeries(msgs []*model.Message, desc ExtractionDescriptor, labe
 			continue
 		}
 
-		dataList := extractGenericData(msg.SpinePayload, desc)
+		dataList := spineparse.ExtractGenericData(msg.SpinePayload, desc)
 		for _, item := range dataList {
 			if filterID != "" && item.ID != filterID {
 				continue
@@ -393,7 +237,7 @@ func loadSetpointDescriptions(s *Server, traceID int64) map[string]string {
 			continue
 		}
 
-		cmds, err := extractCmdArray(msg.SpinePayload)
+		cmds, err := spineparse.ExtractCmdArray(msg.SpinePayload)
 		if err != nil {
 			continue
 		}

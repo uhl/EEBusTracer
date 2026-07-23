@@ -185,22 +185,26 @@ modules. No forking required.
 
 ---
 
+## Completed (v0.7.0)
+
+### Message Flow View
+
+- [x] Sequence diagram view on trace page (canvas-based, virtual scroll)
+- [x] Device lifelines with directional arrows between participants
+- [x] Color-coded by cmdClassifier (read, reply, write, call, notify)
+- [x] Click arrow to jump to message detail
+- [x] Correlated request/response pairs connected by dashed return lines
+- [x] Swimlane overview bar with per-device message density heatmap
+- [x] Draggable viewport indicator in overview for navigation
+- [x] View toggle [Table | Flow] with localStorage persistence
+- [x] Live capture messages appear in flow view with auto-scroll sync
+- [x] Selection syncs between table and flow views
+- [x] `GET /api/traces/{id}/flow/participants` and `flow/correlations` endpoints
+- [x] `MsgCounterRef` added to `MessageSummary` for client-side correlation
+
+---
+
 ## Future Work
-
-### Sequence Diagram View
-
-- [ ] Message flow diagram between devices (vertical timeline, horizontal arrows)
-- [ ] Color-coded by cmdClassifier
-- [ ] Click arrow to jump to message detail
-- [ ] Time scale (relative / absolute)
-- [ ] Filter to show only selected devices or function sets
-
-### Timeline / Swimlane View
-
-- [ ] Horizontal timeline with swimlanes per device
-- [ ] Message events as dots on the timeline
-- [ ] Zoom and pan, time range selection
-- [ ] Overlay: heartbeat intervals, subscription lifetimes
 
 ### Enhanced Message Correlation
 

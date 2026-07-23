@@ -98,7 +98,7 @@ func EvaluateLifecycles(input LifecycleInput) []DeviceUseCaseLifecycle {
 
 			results = append(results, DeviceUseCaseLifecycle{
 				DeviceAddr:    duc.DeviceAddr,
-				ShortName:     shortDeviceAddr(duc.DeviceAddr),
+				ShortName:     ShortDeviceName(duc.DeviceAddr),
 				UseCaseAbbr:   uc.Abbreviation,
 				UseCaseName:   uc.UseCaseName,
 				Available:     uc.Available,

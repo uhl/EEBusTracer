@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eebustracer/eebustracer/internal/model"
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -23,7 +24,7 @@ func TestExtractWriteEntries_LoadControl(t *testing.T) {
 	}`)
 
 	desc := builtInDescriptors["loadcontrol"]
-	items := extractGenericData(payload, desc)
+	items := spineparse.ExtractGenericData(payload, desc)
 
 	if len(items) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(items))
@@ -54,7 +55,7 @@ func TestExtractWriteEntries_Setpoint(t *testing.T) {
 	}`)
 
 	desc := builtInDescriptors["setpoint"]
-	items := extractGenericData(payload, desc)
+	items := spineparse.ExtractGenericData(payload, desc)
 
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
@@ -72,7 +73,7 @@ func TestExtractWriteEntries_EmptyPayload(t *testing.T) {
 	payload := json.RawMessage(`{}`)
 
 	desc := builtInDescriptors["loadcontrol"]
-	items := extractGenericData(payload, desc)
+	items := spineparse.ExtractGenericData(payload, desc)
 
 	if len(items) != 0 {
 		t.Errorf("expected 0 items for empty payload, got %d", len(items))
@@ -148,9 +149,9 @@ func TestExtractCmdArray_SingleObject(t *testing.T) {
 		}
 	}`)
 
-	cmds, err := extractCmdArray(payload)
+	cmds, err := spineparse.ExtractCmdArray(payload)
 	if err != nil {
-		t.Fatalf("extractCmdArray failed: %v", err)
+		t.Fatalf("ExtractCmdArray failed: %v", err)
 	}
 	if len(cmds) != 1 {
 		t.Fatalf("expected 1 cmd, got %d", len(cmds))

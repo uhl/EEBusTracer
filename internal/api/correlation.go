@@ -1,11 +1,11 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/eebustracer/eebustracer/internal/model"
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 )
 
 // RelatedMessage describes a message related to another via correlation.
@@ -56,7 +56,7 @@ func (s *Server) handleRelatedMessages(w http.ResponseWriter, r *http.Request) {
 		for _, ref := range refs {
 			rel := classifyRelationship(msg, ref)
 			latency := computeLatencyMs(msg, ref)
-			status := extractResultStatus(ref.SpinePayload)
+			status := spineparse.ExtractResultStatus(ref.SpinePayload)
 			related = append(related, RelatedMessage{
 				Message:      ref,
 				Relationship: rel,
@@ -76,7 +76,7 @@ func (s *Server) handleRelatedMessages(w http.ResponseWriter, r *http.Request) {
 		for _, orig := range originals {
 			rel := classifyRelationship(orig, msg)
 			latency := computeLatencyMs(orig, msg)
-			status := extractResultStatus(msg.SpinePayload)
+			status := spineparse.ExtractResultStatus(msg.SpinePayload)
 			related = append(related, RelatedMessage{
 				Message:      orig,
 				Relationship: rel,
@@ -192,34 +192,4 @@ func computeLatencyMs(request, response *model.Message) *float64 {
 	return &ms
 }
 
-// extractResultStatus parses the resultData.errorNumber from a SPINE payload.
-// Returns "accepted" if errorNumber == 0 (or absent), "rejected" if non-zero,
-// or "" if no resultData is present.
-func extractResultStatus(spinePayload json.RawMessage) string {
-	if len(spinePayload) == 0 {
-		return ""
-	}
-	cmds, _ := extractCmdArray(spinePayload)
-	for _, cmd := range cmds {
-		var m map[string]json.RawMessage
-		if err := json.Unmarshal(cmd, &m); err != nil {
-			continue
-		}
-		rd, ok := m["resultData"]
-		if !ok {
-			continue
-		}
-		var result struct {
-			ErrorNumber *int `json:"errorNumber"`
-		}
-		if err := json.Unmarshal(rd, &result); err != nil {
-			continue
-		}
-		if result.ErrorNumber == nil || *result.ErrorNumber == 0 {
-			return "accepted"
-		}
-		return "rejected"
-	}
-	return ""
-}
 
