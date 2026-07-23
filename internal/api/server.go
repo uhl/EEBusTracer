@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/capture/start", s.handleCaptureStart)
 	mux.HandleFunc("POST /api/capture/start/logtail", s.handleCaptureStartLogTail)
 	mux.HandleFunc("POST /api/capture/start/tcp", s.handleCaptureStartTCP)
+	mux.HandleFunc("POST /api/capture/start/dlt", s.handleCaptureStartDLT)
 	mux.HandleFunc("POST /api/capture/stop", s.handleCaptureStop)
 
 	mux.HandleFunc("POST /api/traces/import", s.handleImport)
@@ -141,6 +142,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/traces/{id}/depgraph", s.handleDependencyGraph)
 	mux.HandleFunc("GET /api/traces/{id}/writetracking", s.handleWriteTracking)
 	mux.HandleFunc("GET /api/traces/{id}/lifecycle", s.handleLifecycle)
+
+	// Message flow
+	mux.HandleFunc("GET /api/traces/{id}/flow/participants", s.handleFlowParticipants)
+	mux.HandleFunc("GET /api/traces/{id}/flow/correlations", s.handleFlowCorrelations)
 
 	// mDNS discovery
 	mux.HandleFunc("GET /api/mdns/devices", s.handleMDNSDevices)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,12 @@ import (
 	"github.com/eebustracer/eebustracer/internal/model"
 	"github.com/eebustracer/eebustracer/internal/parser"
 )
+
+// buildMessageFromJSON is a thin shim over parser.BuildMessageFromJSON,
+// preserved so the local call sites read naturally.
+func buildMessageFromJSON(p *parser.Parser, normalized []byte, seqNum int, ts time.Time, dir model.Direction, peerDevice string) *model.Message {
+	return parser.BuildMessageFromJSON(p, normalized, seqNum, ts, dir, peerDevice)
+}
 
 // ImportLogFile parses an eebus-go or CEasierLogger style .log file into a
 // trace and messages. The sequence number prefix is optional — when absent,
@@ -74,50 +81,10 @@ func ImportLogFile(r io.Reader, name string) (*model.Trace, []*model.Message, er
 		// The JSON is in EEBUS format — normalize it
 		normalized := parser.NormalizeEEBUSJSON([]byte(jsonPayload))
 
-		// Check if this is a datagram (SPINE message) or a SHIP message
-		msg := &model.Message{
-			SequenceNum:    seqNum,
-			Timestamp:      ts,
-			Direction:      dir,
-			NormalizedJSON: json.RawMessage(normalized),
-			ShipMsgType:    model.ShipMsgTypeData,
-		}
-
 		// Extract peer device name from ship_<name>_<hex>
 		peerDevice := parser.ExtractPeerDevice(peer)
 
-		// Try to parse as SPINE datagram using the existing parser
-		spineMsg := p.ParseSpineFromJSON(normalized)
-		if spineMsg != nil {
-			msg.SpinePayload = spineMsg.SpinePayload
-			msg.CmdClassifier = spineMsg.CmdClassifier
-			msg.FunctionSet = spineMsg.FunctionSet
-			msg.MsgCounter = spineMsg.MsgCounter
-			msg.MsgCounterRef = spineMsg.MsgCounterRef
-			msg.DeviceSource = spineMsg.DeviceSource
-			msg.DeviceDest = spineMsg.DeviceDest
-			msg.EntitySource = spineMsg.EntitySource
-			msg.EntityDest = spineMsg.EntityDest
-			msg.FeatureSource = spineMsg.FeatureSource
-			msg.FeatureDest = spineMsg.FeatureDest
-		} else {
-			// Not a datagram — might be a SHIP-level message or unparseable
-			msg.ParseError = "could not parse SPINE datagram from log line"
-			// Try to identify the peer at least
-			if dir == model.DirectionOutgoing {
-				msg.DeviceDest = peerDevice
-			} else {
-				msg.DeviceSource = peerDevice
-			}
-		}
-
-		// Fill in peer info for the non-addressed side
-		if dir == model.DirectionOutgoing && msg.DeviceDest == "" {
-			msg.DeviceDest = peerDevice
-		} else if dir == model.DirectionIncoming && msg.DeviceSource == "" {
-			msg.DeviceSource = peerDevice
-		}
-
+		msg := buildMessageFromJSON(p, normalized, seqNum, ts, dir, peerDevice)
 		messages = append(messages, msg)
 	}
 
@@ -190,45 +157,9 @@ func ImportEEBusTesterLogFile(r io.Reader, name string) (*model.Trace, []*model.
 		}
 
 		normalized := parser.NormalizeEEBUSJSON([]byte(jsonPayload))
-
-		msg := &model.Message{
-			SequenceNum:    seqNum,
-			Timestamp:      ts,
-			Direction:      dir,
-			NormalizedJSON: json.RawMessage(normalized),
-			ShipMsgType:    model.ShipMsgTypeData,
-		}
-
 		peerDevice := parser.ExtractPeerDevice(peer)
 
-		spineMsg := p.ParseSpineFromJSON(normalized)
-		if spineMsg != nil {
-			msg.SpinePayload = spineMsg.SpinePayload
-			msg.CmdClassifier = spineMsg.CmdClassifier
-			msg.FunctionSet = spineMsg.FunctionSet
-			msg.MsgCounter = spineMsg.MsgCounter
-			msg.MsgCounterRef = spineMsg.MsgCounterRef
-			msg.DeviceSource = spineMsg.DeviceSource
-			msg.DeviceDest = spineMsg.DeviceDest
-			msg.EntitySource = spineMsg.EntitySource
-			msg.EntityDest = spineMsg.EntityDest
-			msg.FeatureSource = spineMsg.FeatureSource
-			msg.FeatureDest = spineMsg.FeatureDest
-		} else {
-			msg.ParseError = "could not parse SPINE datagram from log line"
-			if dir == model.DirectionOutgoing {
-				msg.DeviceDest = peerDevice
-			} else {
-				msg.DeviceSource = peerDevice
-			}
-		}
-
-		if dir == model.DirectionOutgoing && msg.DeviceDest == "" {
-			msg.DeviceDest = peerDevice
-		} else if dir == model.DirectionIncoming && msg.DeviceSource == "" {
-			msg.DeviceSource = peerDevice
-		}
-
+		msg := buildMessageFromJSON(p, normalized, seqNum, ts, dir, peerDevice)
 		messages = append(messages, msg)
 	}
 
@@ -365,6 +296,153 @@ func ImportEEBusHubLogFile(r io.Reader, name string) (*model.Trace, []*model.Mes
 	return trace, messages, nil
 }
 
+// ImportDLTTextLogFile parses a DLT Viewer plain-text export into a trace.
+// Only lines that carry an EEBus JSON payload (detected via known ECU-specific
+// patterns or generic SHIP/SPINE prefix scan) are ingested; all other DLT
+// entries (SVC telemetry, warnings, non-EEBus contexts) are silently skipped.
+//
+// Truncated payloads (marked by DLT with "<<Message truncated, too long>>")
+// are skipped to avoid producing malformed messages.
+func ImportDLTTextLogFile(r io.Reader, name string) (*model.Trace, []*model.Message, error) {
+	p := parser.New()
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+
+	var messages []*model.Message
+	var firstTS, lastTS time.Time
+	seqNum := 0
+	skippedTruncated := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		matches := parser.DLTTextLineRegex.FindStringSubmatch(line)
+		if matches == nil {
+			continue
+		}
+
+		dateStr := matches[2]
+		timeStr := matches[3]
+		apid := matches[4]
+		ctid := matches[5]
+		payload := matches[7]
+
+		extract := parser.ExtractEEBusFromDLTPayload(apid, ctid, payload)
+		if extract == nil {
+			continue
+		}
+		if extract.Truncated {
+			skippedTruncated++
+			continue
+		}
+		// DLT truncates verbose string args at a fixed width; incomplete JSON
+		// would produce a message with a parse error but no useful fields.
+		if !parser.IsCompleteJSON([]byte(extract.JSON)) {
+			skippedTruncated++
+			continue
+		}
+
+		ts, err := parser.ParseDLTTextTimestamp(dateStr, timeStr)
+		if err != nil {
+			continue
+		}
+
+		if firstTS.IsZero() {
+			firstTS = ts
+		}
+		lastTS = ts
+
+		seqNum++
+		normalized := parser.NormalizeEEBUSJSON([]byte(extract.JSON))
+		// DLT doesn't carry a peer identifier in the log frame; the SPINE
+		// addressSource/addressDestination inside the datagram is authoritative.
+		msg := buildMessageFromJSON(p, normalized, seqNum, ts, extract.Direction, "")
+		messages = append(messages, msg)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, nil, fmt.Errorf("scan DLT text log: %w", err)
+	}
+
+	if len(messages) == 0 {
+		return nil, nil, fmt.Errorf("no EEBus messages found in DLT text log")
+	}
+
+	trace := &model.Trace{
+		Name:             name,
+		StartedAt:        firstTS,
+		MessageCount:     len(messages),
+		CreatedAt:        time.Now(),
+		SkippedTruncated: skippedTruncated,
+	}
+	if !lastTS.IsZero() {
+		trace.StoppedAt = &lastTS
+	}
+
+	return trace, messages, nil
+}
+
+// ImportDLTBinaryFile parses a binary .dlt file (storage-header-framed) and
+// extracts EEBus messages. Non-verbose frames and frames with no EEBus payload
+// are silently skipped. The trace timestamps come from each frame's storage
+// header (wall-clock at capture time), which matches DLT Viewer.
+func ImportDLTBinaryFile(r io.Reader, name string) (*model.Trace, []*model.Message, error) {
+	p := parser.New()
+
+	var messages []*model.Message
+	var firstTS, lastTS time.Time
+	seqNum := 0
+	skippedTruncated := 0
+
+	for {
+		frame, err := parser.ReadDLTMessage(r)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, nil, fmt.Errorf("read DLT frame: %w", err)
+		}
+		msg, truncated, err := parser.DLTFrameToMessage(p, frame, seqNum+1)
+		if err != nil {
+			return nil, nil, fmt.Errorf("build message: %w", err)
+		}
+		if truncated {
+			skippedTruncated++
+			continue
+		}
+		if msg == nil {
+			continue
+		}
+		seqNum++
+
+		if firstTS.IsZero() {
+			firstTS = frame.Timestamp
+		}
+		lastTS = frame.Timestamp
+		messages = append(messages, msg)
+	}
+
+	if len(messages) == 0 {
+		return nil, nil, fmt.Errorf("no EEBus messages found in DLT binary file")
+	}
+
+	trace := &model.Trace{
+		Name:             name,
+		StartedAt:        firstTS,
+		MessageCount:     len(messages),
+		CreatedAt:        time.Now(),
+		SkippedTruncated: skippedTruncated,
+	}
+	if !lastTS.IsZero() {
+		trace.StoppedAt = &lastTS
+	}
+
+	return trace, messages, nil
+}
+
 // ImportLogFileAutoDetect reads a .log file, detects its format (eebus-go, eebustester,
 // or EEBus Hub), and delegates to the appropriate importer.
 func ImportLogFileAutoDetect(r io.Reader, name string) (*model.Trace, []*model.Message, error) {
@@ -389,18 +467,26 @@ func ImportLogFileAutoDetect(r io.Reader, name string) (*model.Trace, []*model.M
 		return ImportEEBusTesterLogFile(reader, name)
 	case parser.LogFormatEEBusHub:
 		return ImportEEBusHubLogFile(reader, name)
+	case parser.LogFormatDLTText:
+		return ImportDLTTextLogFile(reader, name)
 	default:
 		return nil, nil, fmt.Errorf("unrecognized log format")
 	}
 }
 
 // ImportFileAutoDetect reads a file and imports it based on content detection.
-// It first tries to detect a known log format; if none is found, it falls back
-// to EET (JSON) import. This allows importing files regardless of extension.
+// It checks for binary DLT (`DLT\x01` magic), then known text log formats,
+// then falls back to EET (JSON) import. This allows importing files
+// regardless of extension.
 func ImportFileAutoDetect(r io.Reader, name string) (*model.Trace, []*model.Message, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read file: %w", err)
+	}
+
+	// Binary DLT files begin with the "DLT\x01" storage-header magic.
+	if len(data) >= 4 && data[0] == 'D' && data[1] == 'L' && data[2] == 'T' && data[3] == 0x01 {
+		return ImportDLTBinaryFile(bytes.NewReader(data), name)
 	}
 
 	// Peek at first 4KB for format detection
@@ -419,6 +505,8 @@ func ImportFileAutoDetect(r io.Reader, name string) (*model.Trace, []*model.Mess
 		return ImportEEBusTesterLogFile(reader, name)
 	case parser.LogFormatEEBusHub:
 		return ImportEEBusHubLogFile(reader, name)
+	case parser.LogFormatDLTText:
+		return ImportDLTTextLogFile(reader, name)
 	default:
 		// Fall back to EET format
 		return ImportTrace(reader)

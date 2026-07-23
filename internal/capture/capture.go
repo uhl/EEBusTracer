@@ -119,6 +119,15 @@ func (e *Engine) Stats() StatsSnapshot {
 	return e.stats.Snapshot()
 }
 
+// IncTruncated implements TruncatedReporter: a source (currently only the
+// DLT stream source) calls this each time it drops an EEBus-shaped frame
+// because its payload was truncated by the transport. The count is surfaced
+// live via the WS status broadcast and persisted into the trace record on
+// capture stop.
+func (e *Engine) IncTruncated() {
+	e.stats.SkippedTruncated.Add(1)
+}
+
 // TraceID returns the current trace ID.
 func (e *Engine) TraceID() int64 {
 	e.mu.Lock()

@@ -64,6 +64,7 @@ const (
 	LogFormatEEBusGo               // eebus-go / spine-go log format
 	LogFormatEEBusTester            // eebustester log format
 	LogFormatEEBusHub              // EEBus Hub log format
+	LogFormatDLTText               // DLT Viewer plain-text export
 )
 
 // EEBusHubLogRegex matches EEBus Hub log lines:
@@ -96,6 +97,9 @@ func DetectLogFormat(content string) LogFormat {
 		}
 		if eebushubPrefixRegex.MatchString(line) {
 			return LogFormatEEBusHub
+		}
+		if dltTextPrefixRegex.MatchString(line) {
+			return LogFormatDLTText
 		}
 		if eebustesterPrefixRegex.MatchString(line) {
 			return LogFormatEEBusTester

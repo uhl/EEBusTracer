@@ -60,7 +60,23 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	if version < 7 {
+		if err := migrateV7(db); err != nil {
+			return fmt.Errorf("migrate v7: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func migrateV7(db *sql.DB) error {
+	// Track EEBus frames that were dropped because the source (DLT verbose
+	// string arg) truncated the payload mid-JSON. Surfaced in the trace
+	// header so users see "something was here" rather than a silent gap.
+	return execInTx(db, []string{
+		`ALTER TABLE traces ADD COLUMN skipped_truncated INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE schema_version SET version = 7`,
+	})
 }
 
 // execInTx runs the given SQL statements in a single transaction.

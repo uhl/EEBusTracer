@@ -180,6 +180,65 @@ func (s *Server) handleCaptureStartTCP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleCaptureStartDLT(w http.ResponseWriter, r *http.Request) {
+	if s.engine.IsCapturing() {
+		writeError(w, http.StatusConflict, "capture already in progress")
+		return
+	}
+
+	var req struct {
+		Host   string `json:"host"`
+		Port   int    `json:"port"`
+		Filter string `json:"filter"`
+		Name   string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Host == "" {
+		writeError(w, http.StatusBadRequest, "host is required")
+		return
+	}
+	if req.Port <= 0 {
+		req.Port = 3490 // dlt-daemon default
+	}
+	if req.Name == "" {
+		req.Name = "DLT Capture " + time.Now().Format("2006-01-02 15:04:05")
+	}
+
+	filter, err := capture.ParseDLTFilter(req.Filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	target := fmt.Sprintf("%s:%d", req.Host, req.Port)
+
+	trace := &model.Trace{
+		Name:      req.Name,
+		StartedAt: time.Now(),
+		CreatedAt: time.Now(),
+	}
+	if err := s.traceRepo.CreateTrace(trace); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	src := capture.NewDLTStreamSource(target, filter, s.engine.Parser(), s.logger)
+	src.SetTruncatedReporter(s.engine)
+	if err := s.engine.StartWithSource(trace.ID, src, target); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"traceId": trace.ID,
+		"target":  target,
+		"filter":  filter.String(),
+	})
+}
+
 func (s *Server) handleCaptureStop(w http.ResponseWriter, r *http.Request) {
 	if !s.engine.IsCapturing() {
 		writeError(w, http.StatusConflict, "no capture in progress")
@@ -194,8 +253,9 @@ func (s *Server) handleCaptureStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update trace with stop time and message count
-	if err := s.traceRepo.StopTrace(traceID, time.Now(), int(stats.PacketsParsed)); err != nil {
+	// Update trace with stop time, message count, and any truncated frames
+	// counted during the capture.
+	if err := s.traceRepo.StopTrace(traceID, time.Now(), int(stats.PacketsParsed), int(stats.SkippedTruncated)); err != nil {
 		s.logger.Error("failed to update trace after stop", "error", err)
 	}
 

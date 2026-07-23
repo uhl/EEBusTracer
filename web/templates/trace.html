@@ -17,6 +17,7 @@
             <div class="trace-name">{{.Name}}</div>
             <div class="trace-meta">
                 <span>{{.MessageCount}} msgs</span>
+                {{if .SkippedTruncated}}<span class="trace-meta-warning" title="{{.SkippedTruncated}} truncated frames skipped">⚠ {{.SkippedTruncated}}</span>{{end}}
                 <span>{{.StartedAt.Format "2006-01-02 15:04"}}</span>
             </div>
             <div class="trace-item-actions">
@@ -47,6 +48,11 @@
 <div class="main-area">
     <div class="trace-header reveal">
         <h2>{{.Trace.Name}}</h2>
+        <span id="trace-truncated-chip" class="trace-warning-chip"
+              title="EEBus frame(s) were detected in the source but had truncated payloads (e.g. DLT verbose string arg cut off). These frames were skipped rather than stored as garbage. Their timestamps are lost."
+              style="{{if not .Trace.SkippedTruncated}}display:none{{end}}">
+            <span id="trace-truncated-count">{{.Trace.SkippedTruncated}}</span> truncated ⚠
+        </span>
         <div class="trace-menu">
             <button class="trace-menu-btn" id="trace-menu-btn" title="Actions">&#8942;</button>
             <div class="trace-menu-dropdown" id="trace-menu-dropdown">
@@ -62,6 +68,10 @@
     </div>
     <div class="toolbar reveal reveal-d1" id="toolbar">
         <div class="toolbar-section toolbar-section-filter">
+            <div class="view-toggle">
+                <button class="view-toggle-btn active" data-view="table" title="Table view">Table</button>
+                <button class="view-toggle-btn" data-view="flow" title="Sequence diagram view">Flow</button>
+            </div>
             <span class="toolbar-label" title="Server-side search — filters and reloads the message list">Filter</span>
             <input type="text" class="toolbar-input" id="filter-search"
                    placeholder="Filter messages..."
@@ -127,6 +137,7 @@
         <button class="auto-scroll-btn active" id="auto-scroll-btn"
                 title="Auto-scroll to latest">&#8595;</button>
     </div>
+    <div id="flow-container" class="flow-container" style="display:none"></div>
     <div class="resize-handle" id="resize-handle"></div>
     <div class="detail-panel reveal reveal-d3" id="detail-panel">
         <div class="detail-tabs">

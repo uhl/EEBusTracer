@@ -11,6 +11,7 @@
             <div class="trace-name">{{.Name}}</div>
             <div class="trace-meta">
                 <span>{{.MessageCount}} msgs</span>
+                {{if .SkippedTruncated}}<span class="trace-meta-warning" title="{{.SkippedTruncated}} truncated frames skipped">⚠ {{.SkippedTruncated}}</span>{{end}}
                 <span>{{.StartedAt.Format "2006-01-02 15:04"}}</span>
             </div>
             <div class="trace-item-actions">
@@ -25,8 +26,8 @@
     </div>
     <div class="sidebar-footer">
         <form id="import-form" enctype="multipart/form-data">
-            <input type="file" id="import-file" accept=".eet,.eebt,.log" hidden>
-            <button type="button" id="btn-import" class="btn btn-sm btn-full" title="Import a trace file (.eet or .log)">Import .eet / .log</button>
+            <input type="file" id="import-file" accept=".eet,.eebt,.log,.dlt" hidden>
+            <button type="button" id="btn-import" class="btn btn-sm btn-full" title="Import a trace file (.eet, .log, or .dlt)">Import .eet / .log / .dlt</button>
         </form>
     </div>
 </div>

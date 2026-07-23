@@ -21,9 +21,9 @@ func NewTraceRepo(db *DB) *TraceRepo {
 // CreateTrace inserts a new trace.
 func (r *TraceRepo) CreateTrace(t *model.Trace) error {
 	result, err := r.db.Exec(
-		`INSERT INTO traces (name, description, started_at, stopped_at, message_count, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		t.Name, t.Description, t.StartedAt, t.StoppedAt, t.MessageCount, t.CreatedAt,
+		`INSERT INTO traces (name, description, started_at, stopped_at, message_count, created_at, skipped_truncated)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		t.Name, t.Description, t.StartedAt, t.StoppedAt, t.MessageCount, t.CreatedAt, t.SkippedTruncated,
 	)
 	if err != nil {
 		return fmt.Errorf("insert trace: %w", err)
@@ -40,9 +40,9 @@ func (r *TraceRepo) CreateTrace(t *model.Trace) error {
 func (r *TraceRepo) GetTrace(id int64) (*model.Trace, error) {
 	t := &model.Trace{}
 	err := r.db.QueryRow(
-		`SELECT id, name, description, started_at, stopped_at, message_count, created_at
+		`SELECT id, name, description, started_at, stopped_at, message_count, created_at, skipped_truncated
 		 FROM traces WHERE id = ?`, id,
-	).Scan(&t.ID, &t.Name, &t.Description, &t.StartedAt, &t.StoppedAt, &t.MessageCount, &t.CreatedAt)
+	).Scan(&t.ID, &t.Name, &t.Description, &t.StartedAt, &t.StoppedAt, &t.MessageCount, &t.CreatedAt, &t.SkippedTruncated)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -55,7 +55,7 @@ func (r *TraceRepo) GetTrace(id int64) (*model.Trace, error) {
 // ListTraces returns all traces ordered by creation time (newest first).
 func (r *TraceRepo) ListTraces() ([]*model.Trace, error) {
 	rows, err := r.db.Query(
-		`SELECT id, name, description, started_at, stopped_at, message_count, created_at
+		`SELECT id, name, description, started_at, stopped_at, message_count, created_at, skipped_truncated
 		 FROM traces ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -66,7 +66,7 @@ func (r *TraceRepo) ListTraces() ([]*model.Trace, error) {
 	var traces []*model.Trace
 	for rows.Next() {
 		t := &model.Trace{}
-		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.StartedAt, &t.StoppedAt, &t.MessageCount, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.StartedAt, &t.StoppedAt, &t.MessageCount, &t.CreatedAt, &t.SkippedTruncated); err != nil {
 			return nil, fmt.Errorf("scan trace: %w", err)
 		}
 		traces = append(traces, t)
@@ -86,11 +86,16 @@ func (r *TraceRepo) UpdateTrace(t *model.Trace) error {
 	return nil
 }
 
-// StopTrace sets the stopped_at timestamp and updates the message count.
-func (r *TraceRepo) StopTrace(id int64, stoppedAt time.Time, messageCount int) error {
+// StopTrace sets the stopped_at timestamp, updates the message count, and
+// persists the count of truncated frames observed during the capture. The
+// truncated count is additive over the existing value so re-starting a
+// capture into the same trace accumulates counts correctly.
+func (r *TraceRepo) StopTrace(id int64, stoppedAt time.Time, messageCount, skippedTruncated int) error {
 	_, err := r.db.Exec(
-		`UPDATE traces SET stopped_at = ?, message_count = ? WHERE id = ?`,
-		stoppedAt, messageCount, id,
+		`UPDATE traces
+		 SET stopped_at = ?, message_count = ?, skipped_truncated = skipped_truncated + ?
+		 WHERE id = ?`,
+		stoppedAt, messageCount, skippedTruncated, id,
 	)
 	if err != nil {
 		return fmt.Errorf("stop trace: %w", err)

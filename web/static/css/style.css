@@ -671,6 +671,24 @@ body {
     font-size: 14px;
 }
 
+.trace-warning-chip {
+    margin-left: 10px;
+    padding: 2px 8px;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    color: #b58900;
+    background: rgba(181, 137, 0, 0.12);
+    border: 1px solid rgba(181, 137, 0, 0.4);
+    border-radius: 10px;
+    cursor: help;
+    white-space: nowrap;
+}
+
+.trace-meta-warning {
+    color: #b58900;
+    font-weight: 600;
+}
+
 .trace-menu {
     position: relative;
     margin-left: auto;
@@ -2752,4 +2770,115 @@ select option {
 
 .feature-role {
     color: var(--accent);
+}
+
+/* --- View Toggle --- */
+.view-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+    margin-right: 10px;
+    flex-shrink: 0;
+}
+
+.view-toggle-btn {
+    font-family: var(--font-ui);
+    padding: 3px 10px;
+    background: none;
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.view-toggle-btn:last-child {
+    border-right: none;
+}
+
+.view-toggle-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-surface);
+}
+
+.view-toggle-btn.active {
+    color: var(--accent);
+    background: var(--accent-tint-strong);
+    font-weight: 600;
+}
+
+/* --- Flow View --- */
+.flow-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 200px;
+}
+
+.flow-overview {
+    height: 48px;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    position: relative;
+}
+
+.flow-overview-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.flow-header {
+    display: flex;
+    background: var(--bg-surface);
+    border-bottom: 2px solid var(--accent);
+    flex-shrink: 0;
+}
+
+.flow-participant {
+    text-align: center;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    padding: 10px 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.flow-margin-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.flow-scroll {
+    flex: 1;
+    overflow-y: auto;
+    position: relative;
+}
+
+.flow-spacer {
+    width: 1px;
+}
+
+.flow-canvas-wrap {
+    position: sticky;
+    top: 0;
+    height: 0;
+    overflow: visible;
+    z-index: 1;
+}
+
+.flow-canvas {
+    width: 100%;
+    pointer-events: auto;
 }

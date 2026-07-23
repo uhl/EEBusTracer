@@ -59,5 +59,8 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Imported trace %q (ID: %d, %d messages)\n", trace.Name, trace.ID, len(messages))
+	if trace.SkippedTruncated > 0 {
+		fmt.Printf("  ⚠ %d frame(s) had truncated payloads and were skipped\n", trace.SkippedTruncated)
+	}
 	return nil
 }

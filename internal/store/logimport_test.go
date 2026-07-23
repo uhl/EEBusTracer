@@ -1,12 +1,68 @@
 package store
 
 import (
+	"bytes"
+	"encoding/binary"
 	"strings"
 	"testing"
 
 	"github.com/eebustracer/eebustracer/internal/model"
 	"github.com/eebustracer/eebustracer/internal/parser"
 )
+
+// buildDLTFrame is a local helper duplicating the parser-package test builder,
+// used to feed synthetic .dlt bytes into the store-level importer.
+func buildDLTFrame(t *testing.T, apid, ctid, s string) []byte {
+	t.Helper()
+
+	strBytes := append([]byte(s), 0)
+	strLen := len(strBytes)
+	payload := make([]byte, 0, 4+2+strLen)
+	typeInfo := make([]byte, 4)
+	binary.LittleEndian.PutUint32(typeInfo, 0x00000200) // TYPE_STRING
+	payload = append(payload, typeInfo...)
+	lenField := make([]byte, 2)
+	binary.LittleEndian.PutUint16(lenField, uint16(strLen))
+	payload = append(payload, lenField...)
+	payload = append(payload, strBytes...)
+
+	pad4 := func(x string) []byte {
+		b := make([]byte, 4)
+		copy(b, x)
+		return b
+	}
+
+	ext := make([]byte, 10)
+	ext[0] = 0x01 // MSIN: verbose bit
+	ext[1] = 1    // noar
+	copy(ext[2:6], pad4(apid))
+	copy(ext[6:10], pad4(ctid))
+
+	ecu := pad4("ECU1")
+	wtms := []byte{0, 0, 0, 0}
+
+	stdBody := append([]byte{}, ecu...)
+	stdBody = append(stdBody, wtms...)
+	stdBody = append(stdBody, ext...)
+	stdBody = append(stdBody, payload...)
+
+	msgLen := uint16(4 + len(stdBody))
+	std := make([]byte, 4)
+	std[0] = 0x01 | 0x04 | 0x10 // UEH | WEID | WTMS
+	std[1] = 0
+	binary.BigEndian.PutUint16(std[2:4], msgLen)
+
+	storage := make([]byte, 16)
+	copy(storage[0:4], []byte("DLT\x01"))
+	binary.LittleEndian.PutUint32(storage[4:8], 1700000000)
+	binary.LittleEndian.PutUint32(storage[8:12], 123456)
+	copy(storage[12:16], pad4("ECU1"))
+
+	frame := append([]byte{}, storage...)
+	frame = append(frame, std...)
+	frame = append(frame, stdBody...)
+	return frame
+}
 
 const testLogData = `15 [11:38:26.008] SEND to ship_Volvo-CEM-400000270_0xaff223b8 MSG: {"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:_Volvo-00000122"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:37916_CEM-400000270"},{"entity":[0]},{"feature":0}]},{"msgCounter":21},{"cmdClassifier":"read"},{"ackRequest":true}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}
 16 [11:38:26.016] RECV from ship_Volvo-CEM-400000270_0xaff223b8 MSG: {"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:37916_CEM-400000270"},{"entity":[2]},{"feature":3}]},{"addressDestination":[{"device":"d:_i:_Volvo-00000122"},{"entity":[1]},{"feature":1}]},{"msgCounter":6},{"cmdClassifier":"read"}]},{"payload":[{"cmd":[[{"deviceClassificationManufacturerData":[]}]]}]}]}
@@ -72,6 +128,40 @@ func TestImportLogFile(t *testing.T) {
 	m2 := messages[2]
 	if m2.FunctionSet != "DeviceDiagnosisStateData" {
 		t.Errorf("m2.FunctionSet = %q, want %q", m2.FunctionSet, "DeviceDiagnosisStateData")
+	}
+}
+
+// SHIP-framed log lines (full {"data":[{"header":...},{"payload":{"datagram":...}}]} envelope)
+// must parse into a fully populated SPINE message, not fall through with an empty
+// CmdClassifier/FunctionSet and a "could not parse SPINE datagram" error.
+const testShipFramedLogData = `1 [11:52:30.315] RECV from ship_Brusa_ICS_GPM_0x0000 MSG: {"data":[{"header":[{"protocolId":"ee1.0"}]},{"payload":{"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:Brusa_ICS_GPM"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"entity":[0]},{"feature":0}]},{"msgCounter":1},{"cmdClassifier":"read"},{"ackRequest":true}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}}]}`
+
+func TestImportLogFile_ShipFramed(t *testing.T) {
+	_, messages, err := ImportLogFile(strings.NewReader(testShipFramedLogData), "ship-framed")
+	if err != nil {
+		t.Fatalf("ImportLogFile failed: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("len(messages) = %d, want 1", len(messages))
+	}
+	m := messages[0]
+	if m.ParseError != "" {
+		t.Errorf("m.ParseError = %q, want empty", m.ParseError)
+	}
+	if m.CmdClassifier != "read" {
+		t.Errorf("m.CmdClassifier = %q, want %q", m.CmdClassifier, "read")
+	}
+	if m.FunctionSet != "NodeManagementDetailedDiscoveryData" {
+		t.Errorf("m.FunctionSet = %q, want %q", m.FunctionSet, "NodeManagementDetailedDiscoveryData")
+	}
+	if m.MsgCounter != "1" {
+		t.Errorf("m.MsgCounter = %q, want %q", m.MsgCounter, "1")
+	}
+	if m.DeviceSource != "d:_i:Brusa_ICS_GPM" {
+		t.Errorf("m.DeviceSource = %q, want %q", m.DeviceSource, "d:_i:Brusa_ICS_GPM")
+	}
+	if m.ShipMsgType != model.ShipMsgTypeData {
+		t.Errorf("m.ShipMsgType = %q, want %q", m.ShipMsgType, model.ShipMsgTypeData)
 	}
 }
 
@@ -435,5 +525,178 @@ func TestImportFileAutoDetect_EEBusGo(t *testing.T) {
 	}
 	if len(messages) != 3 {
 		t.Errorf("len(messages) = %d, want 3", len(messages))
+	}
+}
+
+// Excerpt from a real Porsche CEM DLT text export. Includes:
+//   - a Porsche Send line (outgoing SHIP-framed EEBus JSON)
+//   - a Porsche Received line (incoming SHIP-framed EEBus JSON)
+//   - a truncated line (must be skipped)
+//   - non-EEBus telemetry (SVC, HEMS ShipTransport) that must be skipped
+const testDLTTextLogData = `7390 2026/07/22 11:52:30.315139 162336.0780 252 ECU1 CEM CEM 668 log info verbose 1 : [Session 38099] Send: {"data":[{"header":[{"protocolId":"ee1.0"}]},{"payload":{"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:19667_Porsche-CEM"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:Brusa_ICS_GPM"},{"entity":[0]},{"feature":0}]},{"msgCounter":2},{"msgCounterReference":1},{"cmdClassifier":"reply"}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}}]}
+7413 2026/07/22 11:52:30.548651 162336.2020 17 ECU1 CEM CEM 668 log info verbose 1 : [ConnectionWorker 38099] Received 654 Data bytes during ConnectionDataExchange: {"data":[{"header":[{"protocolId":"ee1.0"}]},{"payload":{"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:Brusa_ICS_GPM"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:19667_Porsche-CEM"},{"entity":[0]},{"feature":0}]},{"msgCounter":5},{"cmdClassifier":"call"},{"ackRequest":true}]},{"payload":[{"cmd":[[{"nodeManagementSubscriptionRequestCall":[]}]]}]}]}}]}
+7415 2026/07/22 11:52:30.548651 162336.2923 19 ECU1 CEM CEM 668 log info verbose 1 : [ConnectionWorker 38099] Received 1949 Data bytes during ConnectionDataExchange: {"data":[{"header":[{"protocolId":"ee1.0"}]}]} <<Message truncated, too long>>
+7770 2026/07/22 11:52:50.916676 162356.5740 86 ECU1 CEM SVC 668 log info verbose 1 #rtm powTot=9839
+7941 2026/07/22 11:53:03.862024 162369.6056 108 ECU1 HEMS HEMS 434 log info verbose 1 : [ShipTransport] tryReconnect`
+
+func TestImportDLTTextLogFile(t *testing.T) {
+	trace, messages, err := ImportDLTTextLogFile(strings.NewReader(testDLTTextLogData), "porsche")
+	if err != nil {
+		t.Fatalf("ImportDLTTextLogFile failed: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("len(messages) = %d, want 2 (truncated + SVC + ShipTransport must be skipped)", len(messages))
+	}
+	if trace.Name != "porsche" {
+		t.Errorf("trace name = %q, want porsche", trace.Name)
+	}
+
+	m0 := messages[0]
+	if m0.Direction != model.DirectionOutgoing {
+		t.Errorf("m0.Direction = %q, want outgoing", m0.Direction)
+	}
+	if m0.CmdClassifier != "reply" {
+		t.Errorf("m0.CmdClassifier = %q, want reply", m0.CmdClassifier)
+	}
+	if m0.DeviceSource != "d:_i:19667_Porsche-CEM" {
+		t.Errorf("m0.DeviceSource = %q", m0.DeviceSource)
+	}
+
+	m1 := messages[1]
+	if m1.Direction != model.DirectionIncoming {
+		t.Errorf("m1.Direction = %q, want incoming", m1.Direction)
+	}
+	if m1.CmdClassifier != "call" {
+		t.Errorf("m1.CmdClassifier = %q, want call", m1.CmdClassifier)
+	}
+	// Sanity: timestamp resolution should be microseconds.
+	if m0.Timestamp.Nanosecond() != 315139000 {
+		t.Errorf("m0 nanos = %d, want 315139000", m0.Timestamp.Nanosecond())
+	}
+}
+
+func TestImportDLTTextLogFile_NoEEBus(t *testing.T) {
+	// Only telemetry, no extractable EEBus content.
+	data := `7770 2026/07/22 11:52:50.916676 162356.5740 86 ECU1 CEM SVC 668 log info verbose 1 #rtm powTot=9839`
+	_, _, err := ImportDLTTextLogFile(strings.NewReader(data), "empty")
+	if err == nil {
+		t.Error("expected error when no EEBus messages found")
+	}
+}
+
+func TestImportFileAutoDetect_DLTText(t *testing.T) {
+	trace, messages, err := ImportFileAutoDetect(strings.NewReader(testDLTTextLogData), "auto-dlt")
+	if err != nil {
+		t.Fatalf("ImportFileAutoDetect failed: %v", err)
+	}
+	if trace.Name != "auto-dlt" {
+		t.Errorf("trace name = %q", trace.Name)
+	}
+	if len(messages) != 2 {
+		t.Errorf("len(messages) = %d, want 2", len(messages))
+	}
+}
+
+func TestImportDLTBinaryFile_SkipTruncated(t *testing.T) {
+	// A frame whose string arg was cut off mid-JSON by DLT's fixed width.
+	// Must be skipped entirely rather than stored with a parse error,
+	// AND counted in trace.SkippedTruncated so the user sees "something was
+	// here" in the trace header.
+	truncated := `{"data":{"header":{"protocolId":"ee1.0"},"payload":{"datagram":{"header":{"specificationVersion":"1.3.0","cmdCla`
+	f1 := buildDLTFrame(t, "CEM", "CEM", truncated)
+	// A second truncated frame — count should be 2.
+	f1b := buildDLTFrame(t, "CEM", "CEM", truncated)
+	// A complete frame alongside them should still import.
+	complete := `[Session 1] Send: {"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:A"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:B"},{"entity":[0]},{"feature":0}]},{"msgCounter":1},{"cmdClassifier":"read"}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}`
+	f2 := buildDLTFrame(t, "CEM", "CEM", complete)
+
+	buf := append([]byte{}, f1...)
+	buf = append(buf, f1b...)
+	buf = append(buf, f2...)
+
+	trace, messages, err := ImportDLTBinaryFile(bytes.NewReader(buf), "trunc")
+	if err != nil {
+		t.Fatalf("ImportDLTBinaryFile: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("len(messages) = %d, want 1 (truncated frames must be skipped)", len(messages))
+	}
+	if messages[0].CmdClassifier != "read" {
+		t.Errorf("CmdClassifier = %q, want read", messages[0].CmdClassifier)
+	}
+	if trace.SkippedTruncated != 2 {
+		t.Errorf("trace.SkippedTruncated = %d, want 2", trace.SkippedTruncated)
+	}
+}
+
+func TestImportDLTTextLogFile_CountsTruncated(t *testing.T) {
+	// The DLT text export appends "<<Message truncated, too long>>" to lines
+	// whose payload exceeded the column width. Those must be counted too.
+	data := `7390 2026/07/22 11:52:30.315139 162336.0780 252 ECU1 CEM CEM 668 log info verbose 1 : [Session 38099] Send: {"data":[{"header":[{"protocolId":"ee1.0"}]},{"payload":{"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:CEM"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:EV"},{"entity":[0]},{"feature":0}]},{"msgCounter":1},{"cmdClassifier":"read"}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}}]}
+7391 2026/07/22 11:52:30.316000 162336.0790 253 ECU1 CEM CEM 668 log info verbose 1 : [Session 38099] Send: {"data":[{"header":[{"protocolId":"ee1.0"}]}]} <<Message truncated, too long>>
+7392 2026/07/22 11:52:30.317000 162336.0800 254 ECU1 CEM CEM 668 log info verbose 1 : [Session 38099] Send: {"data":[{"header":[{"protocolId":"ee1.0"}]},{"payload":{"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:CEM"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:EV"},{"entity":[0]},{"feature":0}]},{"msgCounter":2},{"cmdClassifier":"read"}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}}]}`
+
+	trace, messages, err := ImportDLTTextLogFile(strings.NewReader(data), "text-trunc")
+	if err != nil {
+		t.Fatalf("ImportDLTTextLogFile: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Errorf("len(messages) = %d, want 2", len(messages))
+	}
+	if trace.SkippedTruncated != 1 {
+		t.Errorf("trace.SkippedTruncated = %d, want 1", trace.SkippedTruncated)
+	}
+}
+
+func TestImportDLTBinaryFile(t *testing.T) {
+	// Build two synthetic DLT frames: one with EEBus JSON, one with noise.
+	eebusPayload := `[Session 1] Send: {"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:CEM"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:EV"},{"entity":[0]},{"feature":0}]},{"msgCounter":1},{"cmdClassifier":"read"}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}`
+	f1 := buildDLTFrame(t, "CEM", "CEM", eebusPayload)
+	f2 := buildDLTFrame(t, "CEM", "SVC", `#rtm powTot=9839`)
+
+	buf := append([]byte{}, f1...)
+	buf = append(buf, f2...)
+
+	trace, messages, err := ImportDLTBinaryFile(bytes.NewReader(buf), "dlt-bin")
+	if err != nil {
+		t.Fatalf("ImportDLTBinaryFile: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("len(messages) = %d, want 1 (SVC line must be skipped)", len(messages))
+	}
+	if trace.Name != "dlt-bin" {
+		t.Errorf("trace name = %q", trace.Name)
+	}
+	m := messages[0]
+	if m.Direction != model.DirectionOutgoing {
+		t.Errorf("Direction = %q", m.Direction)
+	}
+	if m.CmdClassifier != "read" {
+		t.Errorf("CmdClassifier = %q", m.CmdClassifier)
+	}
+	if m.DeviceSource != "d:_i:CEM" {
+		t.Errorf("DeviceSource = %q", m.DeviceSource)
+	}
+}
+
+func TestImportFileAutoDetect_DLTBinary(t *testing.T) {
+	eebusPayload := `[ConnectionWorker 1] Received 100 Data bytes during ConnectionDataExchange: {"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:EV"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:CEM"},{"entity":[0]},{"feature":0}]},{"msgCounter":42},{"cmdClassifier":"reply"}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}`
+	frame := buildDLTFrame(t, "CEM", "CEM", eebusPayload)
+
+	trace, messages, err := ImportFileAutoDetect(bytes.NewReader(frame), "auto-dlt-bin")
+	if err != nil {
+		t.Fatalf("ImportFileAutoDetect: %v", err)
+	}
+	if trace.Name != "auto-dlt-bin" {
+		t.Errorf("trace name = %q", trace.Name)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("len(messages) = %d, want 1", len(messages))
+	}
+	if messages[0].Direction != model.DirectionIncoming {
+		t.Errorf("Direction = %q, want incoming", messages[0].Direction)
+	}
+	if messages[0].CmdClassifier != "reply" {
+		t.Errorf("CmdClassifier = %q", messages[0].CmdClassifier)
 	}
 }

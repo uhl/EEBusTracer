@@ -5,6 +5,118 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Live DLT capture**: new "DLT" mode in the capture control connects to a
+  dlt-daemon TCP listener (default port 3490) and streams EEBus messages into
+  a live trace. Reconnects automatically with exponential backoff (1s→30s) on
+  drop / ECU reboot / daemon restart. Verbose string payloads are decoded and
+  emitted via the same extractor pipeline as `.dlt` file import so extraction
+  rules stay consistent.
+- **DLT APID/CTID filter**: optional `APID` or `APID:CTID` filter (comma-
+  separated, e.g. `CEM,HEMS:HEMS`) applied at the wire level to keep signal/
+  noise high on chatty ECU streams. Empty = accept all.
+- New API endpoint `POST /api/capture/start/dlt` with `{host, port, filter,
+  name}` payload, wired into the top-bar capture UI.
+- **Live truncated-frame counter for DLT capture**: `CaptureStats` gained a
+  `SkippedTruncated` atomic counter, incremented by the DLT source via a new
+  `TruncatedReporter` interface (Engine implements it). The count is exposed
+  through the existing `/api/capture/status` endpoint, polled by the trace
+  page every 2 s, and shown as a `⚠ N truncated` chip in the trace header
+  that updates in near-real-time. On capture stop, the accumulated count is
+  added to the trace's `SkippedTruncated` field so it persists across page
+  reloads and matches the file-import behaviour.
+- **DLT text export import**: DLT Viewer "Export as Plain Text ASCII" logs are
+  auto-detected and parsed. EEBus JSON payloads are extracted from verbose
+  message strings using ECU-specific patterns (built-in: Porsche CEM
+  `[Session] Send:` / `[ConnectionWorker] Received … ConnectionDataExchange:`)
+  plus a generic SHIP/SPINE prefix scan for other sources. Non-EEBus DLT
+  entries (SVC telemetry, warnings, unrelated contexts) are silently skipped.
+- **DLT binary import**: raw `.dlt` files (AUTOSAR storage-header framed) are
+  auto-detected via the `DLT\x01` magic bytes and parsed with a hand-rolled
+  streaming decoder. Verbose string arguments are extracted and scanned for
+  EEBus content; non-verbose (Fibex-dependent) frames are skipped.
+- **Truncated-frame counter** (`Trace.SkippedTruncated`, schema v7): DLT
+  imports track how many EEBus-shaped frames were dropped because the source
+  cut the payload mid-JSON (either the DLT `<<Message truncated, too long>>`
+  marker in text export or an incomplete verbose string arg in binary).
+  Surfaced in the trace header ("⚠ N truncated" chip), sidebar meta, and
+  `import` CLI output so users see "something was here" instead of a silent
+  gap. Non-EEBus truncations don't inflate the counter.
+
+### Fixed
+- **Live capture: duplicate rows on page load with active capture**. When a
+  trace page loaded while a capture was running, any message inserted between
+  the `/messages/summaries` snapshot SQL read and the WebSocket listener
+  registration would arrive via both channels: the snapshot put it in the
+  list, then the WS event appended it again. Added a client-side dedup set
+  seeded from the snapshot ids; WS-delivered messages with an id already in
+  the set are silently dropped.
+- Removed a dead `connectWebSocket()` call from the capture-start success
+  handler that opened a WebSocket which was immediately discarded by the
+  subsequent `window.location.href` navigation.
+- Log file importers (`ImportLogFile`, `ImportEEBusTesterLogFile`) now accept
+  SHIP-framed JSON (`{"data":[{"header":...},{"payload":{"datagram":...}}]}`)
+  in addition to bare `{"datagram":...}` payloads. Previously such lines
+  imported with empty CmdClassifier/FunctionSet and a "could not parse SPINE
+  datagram" error. The LogTailSource live importer already had this fallback;
+  file importers are now consistent.
+
+### Changed
+- **Flow View Visual Redesign**: larger row height (28→36px) and lane widths
+  (140→180px) for better readability; thicker 2px arrows with 8px arrowheads
+- Flow view now shows timestamp (HH:MM:SS.mmm) and sequence number in a left
+  margin column, matching the table view's temporal orientation
+- Arrow labels use monospace font colored by classifier instead of plain white
+- SHIP handshake messages (no cmdClassifier) rendered with dashed arrows and
+  secondary color to visually distinguish protocol setup from SPINE data exchange
+- Lifelines rendered as dashed lines [3,6] in muted color for traditional UML
+  sequence diagram look
+- Faint horizontal row separators added matching the table's border pattern
+- Selected row shows 2px gold left accent border matching the table view
+- Participant header: larger text (11→13px), more padding, accent underline,
+  elevated surface background; includes "Time" label over the margin column
+- "No device info" dots enlarged (3→5px radius) with shipMsgType label text
+- Overview bar reduced from 60→48px with subtle top border separator
+
+### Added
+- **Message Flow View**: new sequence diagram view on the trace page toggled via
+  [Table | Flow] button group; shows device lifelines with directional arrows
+  colored by classifier (read=cyan, reply=green, write=amber, call=purple,
+  notify=blue); swimlane overview bar with per-device message density heatmap
+  and draggable viewport indicator for navigating large traces
+- Canvas-based virtual scroll for the flow diagram (same spacer+sticky pattern
+  as the table VirtualScroll); handles large visible ranges efficiently
+- Correlated request/response pairs connected by dashed return lines in the
+  flow view
+- Click on flow arrows selects the message and shows detail panel; selection
+  syncs between table and flow views
+- View preference persisted to localStorage (`eebustracer-view`)
+- `MsgCounterRef` added to `MessageSummary` struct and summaries API for
+  client-side correlation pair building
+- `GET /api/traces/{id}/flow/participants` endpoint — unique devices ordered by
+  first appearance
+- `GET /api/traces/{id}/flow/correlations` endpoint — matched request/response
+  pairs with latency and relationship classification
+- `ExtractFlowParticipants` and `BuildCorrelationPairs` analysis functions in
+  `internal/analysis/flow.go`
+- Exported `ShortDeviceName` function (renamed from `shortDeviceAddr`) for reuse
+  across analysis and flow packages
+- Live capture messages appear in both table and flow views with auto-scroll sync
+- SHIP handshake messages (init, connectionHello, messageProtocolHandshake,
+  connectionPinState, accessMethods) now appear as arrows between network address
+  lifelines in the flow view; `sourceAddr`/`destAddr` added to `MessageSummary`
+  as fallback when SPINE device addresses are not yet established
+- `ShortDeviceName` now strips port from IP:port addresses for cleaner display
+
+### Fixed
+- Flow view canvas was invisible due to incorrect DOM order (spacer before
+  canvas); fixed with a zero-height sticky wrapper
+- Detail panel not updating when clicking message rows (`renderOverviewTab`
+  not awaited)
+- Filter presets not loading on init due to `var` hoisting (TDZ fix regression)
+
 ## [0.6.0] - 2026-03-27
 
 ### Changed

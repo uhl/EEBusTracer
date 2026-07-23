@@ -111,11 +111,14 @@ func runCapture(cmd *cobra.Command, args []string) error {
 	}
 
 	stopTime := time.Now()
-	if err := traceRepo.StopTrace(trace.ID, stopTime, int(stats.PacketsParsed)); err != nil {
+	if err := traceRepo.StopTrace(trace.ID, stopTime, int(stats.PacketsParsed), int(stats.SkippedTruncated)); err != nil {
 		logger.Error("failed to update trace", "error", err)
 	}
 
 	fmt.Printf("Captured %d packets (%d bytes)\n", stats.PacketsReceived, stats.BytesReceived)
+	if stats.SkippedTruncated > 0 {
+		fmt.Printf("  ⚠ %d frame(s) had truncated payloads and were skipped\n", stats.SkippedTruncated)
+	}
 
 	// Export if output file specified
 	if captureOutput != "" {

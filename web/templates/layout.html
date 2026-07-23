@@ -26,6 +26,7 @@
                     <option value="udp">UDP</option>
                     <option value="tcp">TCP</option>
                     <option value="logtail">Log Tail</option>
+                    <option value="dlt">DLT</option>
                 </select>
                 <div id="udp-inputs" class="capture-inputs">
                     <label for="target-host">Target:</label>
@@ -43,9 +44,20 @@
                     <label for="log-file-path">File:</label>
                     <input type="text" id="log-file-path" placeholder="/var/log/eebus.log" class="host-input" style="width:250px" list="recent-paths">
                 </div>
+                <div id="dlt-inputs" class="capture-inputs" style="display:none">
+                    <label for="dlt-host">Target:</label>
+                    <input type="text" id="dlt-host" placeholder="ecu.local" class="host-input" list="recent-hosts-dlt">
+                    <label for="dlt-port">:</label>
+                    <input type="number" id="dlt-port" value="3490" min="1" max="65535" class="port-input">
+                    <label for="dlt-filter" title="Comma-separated APID or APID:CTID filter. Empty = accept all.">Filter:</label>
+                    <input type="text" id="dlt-filter" placeholder="CEM,HEMS:HEMS" class="host-input" style="width:160px" list="recent-dlt-filters"
+                           title="Only frames whose APID (and optional CTID) match will be captured. Leave empty to capture everything.">
+                </div>
                 <datalist id="recent-hosts-udp"></datalist>
                 <datalist id="recent-hosts-tcp"></datalist>
+                <datalist id="recent-hosts-dlt"></datalist>
                 <datalist id="recent-paths"></datalist>
+                <datalist id="recent-dlt-filters"></datalist>
                 <button id="capture-expand-btn" class="capture-expand-btn"
                         title="Show capture controls">Capture &#9656;</button>
                 <button id="btn-start-capture" class="btn btn-start"{{if .Capturing}} disabled{{end}} title="Start recording messages">Start Capture</button>
@@ -76,6 +88,7 @@
 
     <script src="/static/js/common.js"></script>
     <script src="/static/js/virtual-scroll.js"></script>
+    <script src="/static/js/flow.js"></script>
     <script src="/static/js/app.js"></script>
     <script>
     (function() {

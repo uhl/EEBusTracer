@@ -10,6 +10,8 @@ EEBusTracer.
 | EEBusTracer trace | `.eet` | Native export format (JSON-based) |
 | eebus-go log | `.log` | Log output from eebus-go / spine-go stacks |
 | eebustester log | `.log` | Log output from eebustester (EEBus Living Lab); auto-detected |
+| DLT text export | `.log`, `.txt` | DLT Viewer "Export as Plain Text ASCII"; EEBus content extracted from verbose payload strings (built-in Porsche CEM extractor + generic SHIP/SPINE prefix scan) |
+| DLT binary | `.dlt` | Raw AUTOSAR DLT storage-header file; verbose string arguments scanned for EEBus JSON |
 
 ## Usage
 

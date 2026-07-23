@@ -810,13 +810,14 @@ func TestAPI_MessageSummaries(t *testing.T) {
 	msgRepo := store.NewMessageRepo(db)
 	now := time.Now()
 	msgs := []*model.Message{
-		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "MeasurementListData", DeviceSource: "devA", DeviceDest: "devB"},
-		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", FunctionSet: "MeasurementListData", DeviceSource: "devB", DeviceDest: "devA"},
-		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "LoadControlLimitListData", DeviceSource: "devA", DeviceDest: "devB"},
+		{TraceID: trace.ID, SequenceNum: 1, Timestamp: now, ShipMsgType: model.ShipMsgTypeConnectionHello, SourceAddr: "192.168.1.1:4712", DestAddr: "192.168.1.2:4712"},
+		{TraceID: trace.ID, SequenceNum: 2, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "MeasurementListData", MsgCounter: "10", DeviceSource: "devA", DeviceDest: "devB"},
+		{TraceID: trace.ID, SequenceNum: 3, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "reply", FunctionSet: "MeasurementListData", MsgCounter: "11", MsgCounterRef: "10", DeviceSource: "devB", DeviceDest: "devA"},
+		{TraceID: trace.ID, SequenceNum: 4, Timestamp: now, ShipMsgType: model.ShipMsgTypeData, CmdClassifier: "read", FunctionSet: "LoadControlLimitListData", MsgCounter: "12", DeviceSource: "devA", DeviceDest: "devB"},
 	}
 	msgRepo.InsertMessages(msgs)
 
-	t.Run("returns all summaries", func(t *testing.T) {
+	t.Run("returns all summaries with MsgCounterRef", func(t *testing.T) {
 		resp, err := http.Get(ts.URL + "/api/traces/" + strconv.FormatInt(trace.ID, 10) + "/messages/summaries")
 		if err != nil {
 			t.Fatalf("GET summaries failed: %v", err)
@@ -827,18 +828,32 @@ func TestAPI_MessageSummaries(t *testing.T) {
 		var summaries []model.MessageSummary
 		json.NewDecoder(resp.Body).Decode(&summaries)
 		resp.Body.Close()
-		if len(summaries) != 3 {
-			t.Errorf("got %d summaries, want 3", len(summaries))
+		if len(summaries) != 4 {
+			t.Fatalf("got %d summaries, want 4", len(summaries))
 		}
-		// Verify summary fields
-		if len(summaries) > 0 {
-			s := summaries[0]
-			if s.SequenceNum != 1 {
-				t.Errorf("SequenceNum = %d, want 1", s.SequenceNum)
-			}
-			if s.DeviceSource != "devA" {
-				t.Errorf("DeviceSource = %q, want %q", s.DeviceSource, "devA")
-			}
+		// First summary is a SHIP handshake — has sourceAddr/destAddr, no device addresses
+		s0 := summaries[0]
+		if s0.ShipMsgType != model.ShipMsgTypeConnectionHello {
+			t.Errorf("ShipMsgType = %q, want %q", s0.ShipMsgType, model.ShipMsgTypeConnectionHello)
+		}
+		if s0.SourceAddr != "192.168.1.1:4712" {
+			t.Errorf("SourceAddr = %q, want %q", s0.SourceAddr, "192.168.1.1:4712")
+		}
+		if s0.DestAddr != "192.168.1.2:4712" {
+			t.Errorf("DestAddr = %q, want %q", s0.DestAddr, "192.168.1.2:4712")
+		}
+		// Second summary is SPINE data with device addresses
+		s1 := summaries[1]
+		if s1.DeviceSource != "devA" {
+			t.Errorf("DeviceSource = %q, want %q", s1.DeviceSource, "devA")
+		}
+		if s1.MsgCounter != "10" {
+			t.Errorf("MsgCounter = %q, want %q", s1.MsgCounter, "10")
+		}
+		// Third summary should have MsgCounterRef
+		s2 := summaries[2]
+		if s2.MsgCounterRef != "10" {
+			t.Errorf("MsgCounterRef = %q, want %q", s2.MsgCounterRef, "10")
 		}
 	})
 

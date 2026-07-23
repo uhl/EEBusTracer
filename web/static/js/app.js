@@ -12,6 +12,10 @@
     var orphanedIds = new Set();
     var useCaseContextMap = {};
     var vs = null; // VirtualScroll instance
+    var flowView = null; // FlowView instance
+    var seenMessageIds = new Set(); // dedup snapshot vs live-WS overlap
+    var captureStatusPollTimer = null; // polls /api/capture/status for live stats
+    var currentView = localStorage.getItem('eebustracer-view') || 'table';
     var bookmarkSet = {}; // messageId -> {label, color}
     var detailCache = {}; // LRU cache: msgId -> full message
     var detailCacheKeys = [];
@@ -23,12 +27,14 @@
     const udpInputs = document.getElementById('udp-inputs');
     const tcpInputs = document.getElementById('tcp-inputs');
     const logtailInputs = document.getElementById('logtail-inputs');
+    const dltInputs = document.getElementById('dlt-inputs');
 
     if (captureMode) {
         captureMode.addEventListener('change', function() {
             if (udpInputs) udpInputs.style.display = this.value === 'udp' ? '' : 'none';
             if (tcpInputs) tcpInputs.style.display = this.value === 'tcp' ? '' : 'none';
             if (logtailInputs) logtailInputs.style.display = this.value === 'logtail' ? '' : 'none';
+            if (dltInputs) dltInputs.style.display = this.value === 'dlt' ? '' : 'none';
             populateRecentTargets();
         });
     }
@@ -101,6 +107,29 @@
                 pathList.appendChild(opt);
             });
         }
+
+        var dltHostList = document.getElementById('recent-hosts-dlt');
+        if (dltHostList) {
+            dltHostList.innerHTML = '';
+            entries.filter(function(e) { return e.mode === 'dlt'; }).forEach(function(e) {
+                var opt = document.createElement('option');
+                opt.value = e.host;
+                opt.label = e.host + ':' + e.port;
+                dltHostList.appendChild(opt);
+            });
+        }
+        var dltFilterList = document.getElementById('recent-dlt-filters');
+        if (dltFilterList) {
+            dltFilterList.innerHTML = '';
+            var seen = {};
+            entries.filter(function(e) { return e.mode === 'dlt' && e.filter; }).forEach(function(e) {
+                if (seen[e.filter]) return;
+                seen[e.filter] = true;
+                var opt = document.createElement('option');
+                opt.value = e.filter;
+                dltFilterList.appendChild(opt);
+            });
+        }
     }
 
     // Auto-fill port when user selects a host from the datalist
@@ -128,8 +157,13 @@
     const tcpPortInput = document.getElementById('tcp-port');
     const logFileInput = document.getElementById('log-file-path');
 
+    const dltHostInput = document.getElementById('dlt-host');
+    const dltPortInput = document.getElementById('dlt-port');
+    const dltFilterInput = document.getElementById('dlt-filter');
+
     setupHostAutoFill(hostInput, portInput, 'udp');
     setupHostAutoFill(tcpHostInput, tcpPortInput, 'tcp');
+    setupHostAutoFill(dltHostInput, dltPortInput, 'dlt');
     populateRecentTargets();
 
     if (btnStart) {
@@ -161,6 +195,19 @@
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({host: host, port: port})
                     });
+                } else if (mode === 'dlt') {
+                    const host = dltHostInput ? dltHostInput.value.trim() : '';
+                    const port = parseInt(dltPortInput ? dltPortInput.value : '') || 3490;
+                    const filter = dltFilterInput ? dltFilterInput.value.trim() : '';
+                    if (!host) {
+                        alert('Enter the DLT daemon host');
+                        return;
+                    }
+                    resp = await fetch('/api/capture/start/dlt', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({host: host, port: port, filter: filter})
+                    });
                 } else {
                     const host = hostInput ? hostInput.value.trim() : '';
                     const port = parseInt(portInput.value) || 4712;
@@ -182,13 +229,17 @@
                         saveRecentTarget({mode: 'logtail', path: logFileInput.value.trim()});
                     } else if (mode === 'tcp') {
                         saveRecentTarget({mode: 'tcp', host: tcpHostInput.value.trim(), port: parseInt(tcpPortInput.value) || 54546});
+                    } else if (mode === 'dlt') {
+                        saveRecentTarget({mode: 'dlt', host: dltHostInput.value.trim(), port: parseInt(dltPortInput.value) || 3490, filter: dltFilterInput ? dltFilterInput.value.trim() : ''});
                     } else {
                         saveRecentTarget({mode: 'udp', host: hostInput.value.trim(), port: parseInt(portInput.value) || 4712});
                     }
                     btnStart.disabled = true;
                     btnStop.disabled = false;
                     statusEl.textContent = 'Recording...';
-                    connectWebSocket(data.traceId);
+                    // The trace page's own on-load handler will connect the
+                    // WebSocket. Connecting here would just be discarded by
+                    // the navigation below.
                     window.location.href = '/traces/' + data.traceId;
                 } else {
                     const err = await resp.json();
@@ -209,6 +260,7 @@
                     btnStop.disabled = true;
                     statusEl.textContent = 'Idle';
                     if (ws) { ws.close(); ws = null; }
+                    stopCaptureStatusPoll();
                     // Re-compact capture controls on trace pages
                     if (typeof window.TRACE_ID !== 'undefined') {
                         setCaptureCompact(true);
@@ -264,6 +316,49 @@
         ws.onclose = function() { ws = null; };
     }
 
+    // --- Live capture stats (truncated-frame counter) ---
+    // Poll /api/capture/status while a capture is active so the trace
+    // header's "N truncated" chip updates in near-real-time. Kept as a
+    // low-frequency poll (2s) rather than a WS event because the counter
+    // only matters as a rough indicator, not per-message.
+    function updateTruncatedChip(count) {
+        var chip = document.getElementById('trace-truncated-chip');
+        var countEl = document.getElementById('trace-truncated-count');
+        if (!chip || !countEl) return;
+        if (count > 0) {
+            countEl.textContent = count;
+            chip.style.display = '';
+        } else {
+            chip.style.display = 'none';
+        }
+    }
+
+    function startCaptureStatusPoll() {
+        if (captureStatusPollTimer) return;
+        var tick = function() {
+            fetch('/api/capture/status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data && data.stats) {
+                        updateTruncatedChip(data.stats.skippedTruncated || 0);
+                    }
+                    if (!data || !data.capturing) {
+                        stopCaptureStatusPoll();
+                    }
+                })
+                .catch(function() { /* transient error, keep polling */ });
+        };
+        tick(); // fire immediately so the chip appears without a 2s delay
+        captureStatusPollTimer = setInterval(tick, 2000);
+    }
+
+    function stopCaptureStatusPoll() {
+        if (captureStatusPollTimer) {
+            clearInterval(captureStatusPollTimer);
+            captureStatusPollTimer = null;
+        }
+    }
+
     // --- Compact capture controls on trace pages ---
     var captureControlsEl = document.querySelector('.capture-controls');
     var captureExpandBtn = document.getElementById('capture-expand-btn');
@@ -291,12 +386,17 @@
                 if (data.capturing && data.traceId === window.TRACE_ID) {
                     connectWebSocket(window.TRACE_ID);
                     setCaptureCompact(false);
+                    // Only DLT reports truncated frames today; harmless for
+                    // other sources (poll returns 0 → chip stays hidden).
+                    startCaptureStatusPoll();
                     // Reflect source type in mode selector
                     if (captureMode && data.sourceType) {
                         if (data.sourceType === 'logtail') {
                             captureMode.value = 'logtail';
                         } else if (data.sourceType === 'tcp') {
                             captureMode.value = 'tcp';
+                        } else if (data.sourceType === 'dlt') {
+                            captureMode.value = 'dlt';
                         } else {
                             captureMode.value = 'udp';
                         }
@@ -326,6 +426,26 @@
                 }
             });
         }
+
+        // Initialize FlowView (wrapped in try-catch so failures cannot block
+        // the rest of the page initialization, especially fetchSummaries).
+        var flowContainer = document.getElementById('flow-container');
+        if (flowContainer && typeof FlowView !== 'undefined') {
+            try {
+                flowView = new FlowView({
+                    container: flowContainer,
+                    onSelect: function(item) {
+                        if (item) showDetail(item.traceId, item.id);
+                    }
+                });
+            } catch (e) {
+                console.error('FlowView init failed:', e);
+                flowView = null;
+            }
+        }
+
+        // View toggle
+        initViewToggle();
 
         // Load sidebar data
         loadBookmarks();
@@ -372,6 +492,11 @@
             var resp = await fetch('/api/traces/' + window.TRACE_ID + '/messages/summaries?' + params.toString());
             var summaries = await resp.json();
             vs.setData(summaries || []);
+            try { if (flowView) flowView.setData(summaries || []); } catch(fe) { console.error('FlowView setData failed:', fe); }
+            // Seed dedup set so any WS event that races with this fetch is
+            // suppressed if the snapshot already contains it.
+            seenMessageIds = new Set();
+            (summaries || []).forEach(function(m) { if (m.id) seenMessageIds.add(m.id); });
             // Track unfiltered total for the filter indicator
             if (!isFiltered) {
                 unfilteredCount = vs.data.length;
@@ -394,6 +519,16 @@
     // Append a live WebSocket message as a summary into the virtual scroll.
     function appendLiveMessage(msg) {
         if (!vs) return;
+
+        // Race guard: the initial `/messages/summaries` fetch happens in
+        // parallel with WS connection. Any message inserted server-side
+        // between the fetch's SQL read and the WS listener being registered
+        // will arrive via BOTH channels — snapshot puts it in vs.data first,
+        // then the WS delivers it again. Track ids seen from either channel
+        // and drop the second copy.
+        if (msg.id && seenMessageIds.has(msg.id)) return;
+        if (msg.id) seenMessageIds.add(msg.id);
+
         // The WebSocket payload already has the summary fields we need
         var summary = {
             id: msg.id,
@@ -405,10 +540,12 @@
             cmdClassifier: msg.cmdClassifier,
             functionSet: msg.functionSet,
             msgCounter: msg.msgCounter,
+            msgCounterRef: msg.msgCounterRef,
             deviceSource: msg.deviceSource,
             deviceDest: msg.deviceDest
         };
         vs.appendItem(summary);
+        try { if (flowView) flowView.appendMessage(summary); } catch(fe) { /* flow view error, ignore */ }
 
         if (autoScroll) {
             vs.scrollToIndex(vs.data.length - 1);
@@ -446,6 +583,7 @@
             for (var i = 0; i < vs.data.length; i++) {
                 if (vs.data[i].id === msgId) {
                     vs.setSelectedIndex(i);
+                    try { if (flowView) flowView.setSelectedIndex(i); } catch(fe) { /* flow view hidden */ }
                     break;
                 }
             }
@@ -473,7 +611,7 @@
             document.querySelectorAll('.detail-panel .tab').forEach(t => t.classList.remove('active'));
             var overviewTab = document.querySelector('.detail-panel .tab[data-tab="overview"]');
             if (overviewTab) overviewTab.classList.add('active');
-            renderOverviewTab(msg, content);
+            await renderOverviewTab(msg, content);
         } catch (e) {
             console.error('Failed to load message detail:', e);
         }
@@ -1646,10 +1784,10 @@ function categoryAbbr(cat) {
     }
 
     // --- Filter Presets (gear-icon dropdown) ---
-    const btnPresets = document.getElementById('btn-presets');
-    const presetsDropdown = document.getElementById('presets-dropdown');
-    const presetList = document.getElementById('preset-list');
-    const btnSavePreset = document.getElementById('btn-save-preset');
+    var btnPresets = document.getElementById('btn-presets');
+    var presetsDropdown = document.getElementById('presets-dropdown');
+    var presetList = document.getElementById('preset-list');
+    var btnSavePreset = document.getElementById('btn-save-preset');
 
     if (btnPresets && presetsDropdown) {
         btnPresets.addEventListener('click', function(e) {
@@ -1691,6 +1829,7 @@ function categoryAbbr(cat) {
     }
 
     async function loadPresets() {
+        if (!presetList) presetList = document.getElementById('preset-list');
         if (!presetList) return;
         try {
             const resp = await fetch('/api/presets');
@@ -2095,6 +2234,9 @@ function categoryAbbr(cat) {
         } else if (mode === 'tcp') {
             if (tcpHostInput) tcpHostInput.value = host;
             if (tcpPortInput) tcpPortInput.value = port || 54546;
+        } else if (mode === 'dlt') {
+            if (dltHostInput) dltHostInput.value = host;
+            if (dltPortInput) dltPortInput.value = port || 3490;
         } else {
             if (hostInput) hostInput.value = host;
             if (portInput) portInput.value = port || 4712;
@@ -2338,12 +2480,14 @@ function categoryAbbr(cat) {
             var atBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 30;
             if (atBottom) {
                 autoScroll = true;
+                if (flowView) flowView.setAutoScroll(true);
                 if (autoScrollBtn) {
                     autoScrollBtn.classList.add('active');
                     autoScrollBtn.classList.remove('has-new');
                 }
             } else {
                 autoScroll = false;
+                if (flowView) flowView.setAutoScroll(false);
                 if (autoScrollBtn) {
                     autoScrollBtn.classList.remove('active');
                 }
@@ -2353,12 +2497,15 @@ function categoryAbbr(cat) {
 
     if (autoScrollBtn) {
         autoScrollBtn.addEventListener('click', function() {
-            if (vs && vs.data.length > 0) {
+            if (currentView === 'flow' && flowView && flowView.data.length > 0) {
+                flowView.scrollToIndex(flowView.data.length - 1);
+            } else if (vs && vs.data.length > 0) {
                 vs.scrollToIndex(vs.data.length - 1);
             } else if (scrollContainer) {
                 scrollContainer.scrollTop = scrollContainer.scrollHeight;
             }
             autoScroll = true;
+            if (flowView) flowView.setAutoScroll(true);
             autoScrollBtn.classList.add('active');
             autoScrollBtn.classList.remove('has-new');
         });
@@ -2373,4 +2520,57 @@ function categoryAbbr(cat) {
     });
 
     updateStatusBar();
+
+    // --- View Toggle ---
+    function initViewToggle() {
+        var btns = document.querySelectorAll('.view-toggle-btn');
+        if (btns.length === 0) return;
+
+        btns.forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                setView(btn.getAttribute('data-view'));
+            });
+        });
+
+        // Apply saved preference
+        if (currentView === 'flow') {
+            setView('flow');
+        }
+    }
+
+    function setView(view) {
+        currentView = view;
+        try { localStorage.setItem('eebustracer-view', view); } catch(e) {}
+
+        var tableContainer = document.querySelector('.message-table-container');
+        var flowContainer = document.getElementById('flow-container');
+        var btns = document.querySelectorAll('.view-toggle-btn');
+
+        btns.forEach(function(btn) {
+            btn.classList.toggle('active', btn.getAttribute('data-view') === view);
+        });
+
+        if (view === 'flow') {
+            if (tableContainer) tableContainer.style.display = 'none';
+            if (flowContainer) flowContainer.style.display = '';
+            if (flowView && vs) {
+                flowView.setData(vs.data);
+                flowView.setAutoScroll(autoScroll);
+                // Re-render after browser completes layout of the newly-visible container
+                requestAnimationFrame(function() {
+                    flowView._updateCanvasSize();
+                    flowView._layoutParticipants();
+                    flowView._renderHeader();
+                    flowView._render();
+                    flowView._renderOverview();
+                });
+            }
+        } else {
+            if (tableContainer) tableContainer.style.display = '';
+            if (flowContainer) flowContainer.style.display = 'none';
+            // Re-render VirtualScroll after the table becomes visible again,
+            // since it may have been hidden when data was loaded.
+            if (vs) vs.refresh();
+        }
+    }
 })();

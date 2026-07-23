@@ -50,14 +50,14 @@ func TestMigrate(t *testing.T) {
 		t.Errorf("chart_definitions table not found: %v", err)
 	}
 
-	// Verify schema version is 6
+	// Verify schema version is 7
 	var version int
 	err = db.SqlDB().QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
 	if err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("schema version = %d, want 6", version)
+	if version != 7 {
+		t.Errorf("schema version = %d, want 7", version)
 	}
 
 	// Verify V5 correlation indexes exist
@@ -103,16 +103,24 @@ func TestMigrateV1ToV2(t *testing.T) {
 		t.Fatalf("migrateV1 failed: %v", err)
 	}
 
-	// Insert a message before v2 migration to test backfill
-	traceRepo := NewTraceRepo(db)
-	trace := &model.Trace{Name: "Test", StartedAt: time.Now(), CreatedAt: time.Now()}
-	if err := traceRepo.CreateTrace(trace); err != nil {
-		t.Fatalf("CreateTrace: %v", err)
+	// Insert a message before v2 migration to test backfill.
+	// Use raw SQL rather than TraceRepo.CreateTrace because the repo now
+	// writes columns added by later migrations.
+	res, err := db.SqlDB().Exec(
+		`INSERT INTO traces (name, description, started_at, created_at) VALUES (?, '', ?, ?)`,
+		"Test", time.Now(), time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("insert trace: %v", err)
+	}
+	traceID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last id: %v", err)
 	}
 	_, err = db.SqlDB().Exec(
 		`INSERT INTO messages (trace_id, sequence_num, timestamp, ship_msg_type, normalized_json)
 		 VALUES (?, 1, ?, 'data', '{"test":"backfill_data"}')`,
-		trace.ID, time.Now(),
+		traceID, time.Now(),
 	)
 	if err != nil {
 		t.Fatalf("insert pre-migration message: %v", err)

@@ -100,7 +100,7 @@ func TestTraceRepo_StopTrace(t *testing.T) {
 	}
 
 	stopTime := time.Now().Truncate(time.Second)
-	if err := repo.StopTrace(trace.ID, stopTime, 42); err != nil {
+	if err := repo.StopTrace(trace.ID, stopTime, 42, 7); err != nil {
 		t.Fatalf("StopTrace failed: %v", err)
 	}
 
@@ -113,6 +113,18 @@ func TestTraceRepo_StopTrace(t *testing.T) {
 	}
 	if got.MessageCount != 42 {
 		t.Errorf("MessageCount = %d, want 42", got.MessageCount)
+	}
+	if got.SkippedTruncated != 7 {
+		t.Errorf("SkippedTruncated = %d, want 7", got.SkippedTruncated)
+	}
+
+	// Second stop accumulates truncations rather than overwriting them.
+	if err := repo.StopTrace(trace.ID, stopTime, 42, 3); err != nil {
+		t.Fatalf("second StopTrace failed: %v", err)
+	}
+	got, _ = repo.GetTrace(trace.ID)
+	if got.SkippedTruncated != 10 {
+		t.Errorf("after 2nd stop: SkippedTruncated = %d, want 10 (accumulated)", got.SkippedTruncated)
 	}
 }
 
