@@ -3,8 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 
+	"github.com/eebustracer/eebustracer/internal/spineparse"
 	"github.com/eebustracer/eebustracer/internal/store"
 )
 
@@ -125,109 +125,25 @@ func (s *Server) handleGetDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// parseDiscoveryEntities extracts entity/feature tree from a SPINE payload.
-// This is a best-effort parser that extracts from the NodeManagementDetailedDiscoveryData structure.
+// parseDiscoveryEntities extracts entity/feature tree from a SPINE payload
+// (NodeManagementDetailedDiscoveryData). Delegates to spineparse so the same
+// parser is reused by the CLI and analysis code.
 func parseDiscoveryEntities(spinePayload json.RawMessage) []EntityInfoResult {
-	// Parse the datagram structure to get to the cmd payload
-	var dg struct {
-		Datagram struct {
-			Payload struct {
-				Cmd []json.RawMessage `json:"cmd"`
-			} `json:"payload"`
-		} `json:"datagram"`
-	}
-	if err := json.Unmarshal(spinePayload, &dg); err != nil {
+	src := spineparse.ParseDiscoveryEntities(spinePayload)
+	if len(src) == 0 {
 		return nil
 	}
-
-	for _, cmd := range dg.Datagram.Payload.Cmd {
-		var cmdMap map[string]json.RawMessage
-		if err := json.Unmarshal(cmd, &cmdMap); err != nil {
-			continue
+	out := make([]EntityInfoResult, len(src))
+	for i, e := range src {
+		out[i] = EntityInfoResult{Address: e.Address, EntityType: e.EntityType}
+		for _, f := range e.Features {
+			out[i].Features = append(out[i].Features, FeatureInfoResult{
+				Address:     f.Address,
+				FeatureType: f.FeatureType,
+				Role:        f.Role,
+				Functions:   f.Functions,
+			})
 		}
-
-		raw, ok := cmdMap["nodeManagementDetailedDiscoveryData"]
-		if !ok {
-			continue
-		}
-
-		// SPINE spec: supportedFunction is inside description
-		// (NetworkManagementFeatureDescriptionDataType), not at the
-		// featureInformation level.
-		var discovery struct {
-			EntityInformation []struct {
-				Description *struct {
-					EntityAddress *struct {
-						Entity json.RawMessage `json:"entity"`
-					} `json:"entityAddress"`
-					EntityType  *string `json:"entityType"`
-					Description *string `json:"description"`
-				} `json:"description"`
-			} `json:"entityInformation"`
-			FeatureInformation []struct {
-				Description *struct {
-					FeatureAddress *struct {
-						Entity  json.RawMessage `json:"entity"`
-						Feature *int            `json:"feature"`
-					} `json:"featureAddress"`
-					FeatureType       *string `json:"featureType"`
-					Role              *string `json:"role"`
-					Description       *string `json:"description"`
-					SupportedFunction []struct {
-						Function           *string     `json:"function"`
-						PossibleOperations interface{} `json:"possibleOperations"`
-					} `json:"supportedFunction"`
-				} `json:"description"`
-			} `json:"featureInformation"`
-		}
-		if err := json.Unmarshal(raw, &discovery); err != nil {
-			continue
-		}
-
-		// Build entity map
-		entityMap := make(map[string]*EntityInfoResult)
-		var entities []EntityInfoResult
-
-		for _, ei := range discovery.EntityInformation {
-			if ei.Description == nil || ei.Description.EntityAddress == nil {
-				continue
-			}
-			addr := string(ei.Description.EntityAddress.Entity)
-			entity := EntityInfoResult{Address: addr}
-			if ei.Description.EntityType != nil {
-				entity.EntityType = *ei.Description.EntityType
-			}
-			entities = append(entities, entity)
-			entityMap[addr] = &entities[len(entities)-1]
-		}
-
-		for _, fi := range discovery.FeatureInformation {
-			if fi.Description == nil || fi.Description.FeatureAddress == nil {
-				continue
-			}
-			feature := FeatureInfoResult{}
-			if fi.Description.FeatureAddress.Feature != nil {
-				feature.Address = strconv.Itoa(*fi.Description.FeatureAddress.Feature)
-			}
-			if fi.Description.FeatureType != nil {
-				feature.FeatureType = *fi.Description.FeatureType
-			}
-			if fi.Description.Role != nil {
-				feature.Role = *fi.Description.Role
-			}
-			for _, sf := range fi.Description.SupportedFunction {
-				if sf.Function != nil {
-					feature.Functions = append(feature.Functions, *sf.Function)
-				}
-			}
-
-			if e, ok := entityMap[string(fi.Description.FeatureAddress.Entity)]; ok {
-				e.Features = append(e.Features, feature)
-			}
-		}
-
-		return entities
 	}
-
-	return nil
+	return out
 }

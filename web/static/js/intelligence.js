@@ -454,9 +454,17 @@
                 lc.steps.forEach(function(step) {
                     var icon = lifecycleStepIcon(step.status);
                     var iconCls = 'lc-step-icon lc-step-icon-' + step.status;
-                    html += '<div class="lc-step">';
+                    var hasJump = step.messageId && step.messageId > 0;
+                    var stepCls = 'lc-step' + (hasJump ? ' lc-step-jumpable' : '');
+                    var jumpAttrs = hasJump
+                        ? ' role="button" tabindex="0" title="Jump to message #' + step.messageId + '" onclick="window.location.href=\'/traces/' + TRACE_ID + '?msg=' + step.messageId + '\'"'
+                        : '';
+                    html += '<div class="' + stepCls + '"' + jumpAttrs + '>';
                     html += '<span class="' + iconCls + '">' + icon + '</span>';
                     html += '<span class="lc-step-name">' + escapeHtml(step.name) + '</span>';
+                    if (hasJump) {
+                        html += '<span class="lc-step-jump" aria-hidden="true">↱</span>';
+                    }
                     if (step.status !== 'pass' && step.status !== 'na' && step.details) {
                         html += '<div class="lc-step-details">' + formatStepDetails(step.details) + '</div>';
                     }

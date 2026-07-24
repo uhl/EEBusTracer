@@ -38,10 +38,15 @@ func (s *Server) handleLifecycle(w http.ResponseWriter, r *http.Request) {
 	connStates := buildConnectionStates(allMsgs)
 	connections := make([]analysis.ConnectionInfo, 0, len(connStates))
 	for _, cs := range connStates {
+		var lastMsgID int64
+		if n := len(cs.States); n > 0 {
+			lastMsgID = cs.States[n-1].MessageID
+		}
 		connections = append(connections, analysis.ConnectionInfo{
-			DeviceSource: cs.DeviceSource,
-			DeviceDest:   cs.DeviceDest,
-			CurrentState: cs.CurrentState,
+			DeviceSource:  cs.DeviceSource,
+			DeviceDest:    cs.DeviceDest,
+			CurrentState:  cs.CurrentState,
+			LastMessageID: lastMsgID,
 		})
 	}
 

@@ -2347,6 +2347,35 @@ td.cmd-notify  { color: var(--badge-notify-fg); }
     font-size: 10px;
 }
 
+.lc-step-jumpable {
+    cursor: pointer;
+    border-radius: 3px;
+    padding-left: 2px;
+    padding-right: 4px;
+}
+
+.lc-step-jumpable:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.05));
+}
+
+.lc-step-jumpable:focus {
+    outline: 1px solid var(--accent, #6a9);
+    outline-offset: 1px;
+}
+
+.lc-step-jump {
+    color: var(--text-muted);
+    font-size: 10px;
+    margin-left: auto;
+    padding-left: 6px;
+    opacity: 0.6;
+}
+
+.lc-step-jumpable:hover .lc-step-jump {
+    opacity: 1;
+    color: var(--accent, #6a9);
+}
+
 /* --- Lifecycle Missing Items --- */
 .lc-missing {
     margin-top: 4px;

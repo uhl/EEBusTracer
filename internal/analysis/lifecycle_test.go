@@ -731,3 +731,57 @@ func findStep(steps []LifecycleStep, name string) *LifecycleStep {
 	}
 	return nil
 }
+
+// TestEvaluateLifecycles_StepsCarryMessageIDs verifies that lifecycle steps
+// expose the messageId of the evidence that produced their status, so the UI
+// can offer jump-to-message navigation.
+func TestEvaluateLifecycles_StepsCarryMessageIDs(t *testing.T) {
+	input := LifecycleInput{
+		Connections: []ConnectionInfo{
+			{DeviceSource: "devA", DeviceDest: "devB", CurrentState: "data", LastMessageID: 101},
+		},
+		Devices: []DeviceInfo{
+			{DeviceAddr: "devA", LastDiscoveryMessageID: 202, Entities: []EntityInfo{
+				{EntityType: "EVSE", Features: []FeatureInfo{
+					{Functions: []string{"LoadControlLimitListData", "LoadControlLimitDescriptionListData", "LoadControlLimitConstraintsListData"}},
+				}},
+			}},
+		},
+		UseCases: []DeviceUseCases{
+			{DeviceAddr: "devA", MessageID: 303, UseCases: []UseCaseInfo{
+				{UseCaseName: "limitationOfPowerConsumption", Abbreviation: "LPC", Available: true},
+			}},
+		},
+		Subscriptions: []SubscriptionEntry{
+			{ServerDevice: "devA", ServerFeatureType: "LoadControl", Active: true, MessageID: 404},
+		},
+		Bindings: []BindingEntry{
+			{ServerDevice: "devA", ServerFeatureType: "LoadControl", Active: true, MessageID: 505},
+		},
+	}
+
+	result := EvaluateLifecycles(input)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(result))
+	}
+
+	cases := []struct {
+		name string
+		want int64
+	}{
+		{"SHIP Handshake", 101},
+		{"Feature Discovery", 202},
+		{"UC Announced", 303},
+		{"Subscriptions", 404},
+		{"Bindings", 505},
+	}
+	for _, tc := range cases {
+		step := findStep(result[0].Steps, tc.name)
+		if step == nil {
+			t.Fatalf("%s step not found", tc.name)
+		}
+		if step.MessageID != tc.want {
+			t.Errorf("%s messageId = %d, want %d", tc.name, step.MessageID, tc.want)
+		}
+	}
+}

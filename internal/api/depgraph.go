@@ -61,10 +61,11 @@ func (s *Server) handleDependencyGraph(w http.ResponseWriter, r *http.Request) {
 // added entities (partial update), so we accumulate all entities and features
 // across all messages to build the complete tree.
 type deviceEntityAccumulator struct {
-	addr         string
-	entityOrder  []string                          // preserves insertion order
-	entityMap    map[string]*analysis.EntityInfo    // entity address → entity
-	featureSeen  map[string]map[string]bool         // entity address → feature address → seen
+	addr          string
+	entityOrder   []string                        // preserves insertion order
+	entityMap     map[string]*analysis.EntityInfo // entity address → entity
+	featureSeen   map[string]map[string]bool      // entity address → feature address → seen
+	lastMessageID int64                           // most recent contributing message
 }
 
 func newDeviceEntityAccumulator(addr string) *deviceEntityAccumulator {
@@ -105,7 +106,10 @@ func (a *deviceEntityAccumulator) merge(entities []EntityInfoResult) {
 }
 
 func (a *deviceEntityAccumulator) build() analysis.DeviceInfo {
-	di := analysis.DeviceInfo{DeviceAddr: a.addr}
+	di := analysis.DeviceInfo{
+		DeviceAddr:             a.addr,
+		LastDiscoveryMessageID: a.lastMessageID,
+	}
 	for _, addr := range a.entityOrder {
 		di.Entities = append(di.Entities, *a.entityMap[addr])
 	}
@@ -139,6 +143,7 @@ func extractDevicesFromDiscovery(msgs []*model.Message) []analysis.DeviceInfo {
 		if len(msg.SpinePayload) > 0 {
 			entities := parseDiscoveryEntities(msg.SpinePayload)
 			acc.merge(entities)
+			acc.lastMessageID = msg.ID
 		}
 	}
 

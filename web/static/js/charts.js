@@ -192,6 +192,9 @@
                     if (dp.isActive !== undefined && dp.isActive !== null) {
                         pt.isActive = dp.isActive;
                     }
+                    // Preserve messageId so onClick can deep-link back to
+                    // the trace page.
+                    if (dp.messageId) pt.messageId = dp.messageId;
                     return pt;
                 }),
                 borderColor: CHART_COLORS[i % CHART_COLORS.length],
@@ -269,6 +272,31 @@
                     mode: 'nearest',
                     intersect: false
                 },
+                // Click a datapoint to jump to the corresponding message on
+                // the trace page. Uses 'nearest' with intersect:true so we
+                // only navigate when the user actually clicked the point,
+                // not the general chart area.
+                onClick: function(evt, activeElements, chart) {
+                    var hits = chart.getElementsAtEventForMode(
+                        evt, 'nearest', { intersect: true }, false);
+                    if (!hits.length) return;
+                    var hit = hits[0];
+                    var pt = chart.data.datasets[hit.datasetIndex].data[hit.index];
+                    if (pt && pt.messageId) {
+                        window.location.href = '/traces/' + TRACE_ID +
+                            '?msg=' + pt.messageId;
+                    }
+                },
+                // Pointer cursor when hovering a clickable datapoint so
+                // users get a visual affordance.
+                onHover: function(evt, activeElements, chart) {
+                    var hits = chart.getElementsAtEventForMode(
+                        evt, 'nearest', { intersect: true }, false);
+                    var target = evt.native ? evt.native.target : null;
+                    if (target) {
+                        target.style.cursor = hits.length ? 'pointer' : 'default';
+                    }
+                },
                 scales: (function() {
                     var scales = {
                         x: {
@@ -340,8 +368,15 @@
                                     label += raw.isActive ? ' (active)' : ' (inactive)';
                                 }
                                 return label;
+                            },
+                            footer: function(items) {
+                                if (!items.length) return '';
+                                var raw = items[0].raw;
+                                return raw && raw.messageId ? 'click to open message' : '';
                             }
-                        }
+                        },
+                        footerFont: { family: "'JetBrains Mono', 'SF Mono', monospace", size: 10, style: 'italic' },
+                        footerColor: cssVar('--chart-tooltip-body')
                     },
                     zoom: {
                         pan: {

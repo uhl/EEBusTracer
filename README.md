@@ -296,6 +296,13 @@ prefix regex for text formats), so extension doesn't matter.
 ./eebustracer analyze trace.eet --check usecases,metrics
 ```
 
+### Device summary
+
+```bash
+./eebustracer devices trace.eet                # text summary of devices, entities, use cases
+./eebustracer devices trace.eet --output json  # machine-readable
+```
+
 ### Global options
 
 ```bash

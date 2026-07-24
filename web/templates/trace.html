@@ -56,7 +56,12 @@
         <div class="trace-menu">
             <button class="trace-menu-btn" id="trace-menu-btn" title="Actions">&#8942;</button>
             <div class="trace-menu-dropdown" id="trace-menu-dropdown">
-                <a href="/api/traces/{{.Trace.ID}}/export" class="trace-menu-item">Export</a>
+                <a href="/api/traces/{{.Trace.ID}}/export" class="trace-menu-item"
+                   title="Download the full trace as a portable .eet bundle">Export trace (.eet)</a>
+                <button type="button" class="trace-menu-item" id="btn-export-view-csv"
+                        title="Download the currently filtered messages as CSV">Export current view (CSV)</button>
+                <button type="button" class="trace-menu-item" id="btn-export-view-json"
+                        title="Download the currently filtered messages as JSON">Export current view (JSON)</button>
                 <button class="trace-menu-item trace-menu-danger" onclick="deleteTrace({{.Trace.ID}})">Delete</button>
             </div>
         </div>

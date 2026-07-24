@@ -83,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/traces/{id}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /api/traces/{id}/messages/summaries", s.handleListMessageSummaries)
+	mux.HandleFunc("GET /api/traces/{id}/messages/export", s.handleExportMessages)
 	mux.HandleFunc("GET /api/traces/{id}/messages/{mid}", s.handleGetMessage)
 
 	mux.HandleFunc("GET /api/capture/status", s.handleCaptureStatus)

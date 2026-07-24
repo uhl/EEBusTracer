@@ -46,9 +46,10 @@ const (
 
 // LifecycleStep represents a single step in the use case lifecycle checklist.
 type LifecycleStep struct {
-	Name    string     `json:"name"`
-	Status  StepStatus `json:"status"`
-	Details string     `json:"details"`
+	Name      string     `json:"name"`
+	Status    StepStatus `json:"status"`
+	Details   string     `json:"details"`
+	MessageID int64      `json:"messageId,omitempty"`
 }
 
 // DeviceUseCaseLifecycle is the lifecycle checklist result for one device+UC pair.
@@ -67,6 +68,9 @@ type ConnectionInfo struct {
 	DeviceSource string
 	DeviceDest   string
 	CurrentState string
+	// LastMessageID is the messageId of the most recent state transition,
+	// used as the evidence anchor for the SHIP Handshake step.
+	LastMessageID int64
 }
 
 // LifecycleInput is the input DTO for EvaluateLifecycles, keeping the analysis
@@ -91,7 +95,7 @@ func EvaluateLifecycles(input LifecycleInput) []DeviceUseCaseLifecycle {
 			steps := []LifecycleStep{
 				evaluateHandshake(duc.DeviceAddr, input.Connections),
 				evaluateDiscovery(duc.DeviceAddr, uc.Abbreviation, input.Devices),
-				evaluateAnnounced(uc),
+				evaluateAnnounced(uc, duc.MessageID),
 				evaluateSubscriptions(duc.DeviceAddr, spec, hasSpec, input.Subscriptions),
 				evaluateBindings(duc.DeviceAddr, spec, hasSpec, input.Bindings),
 			}
@@ -118,6 +122,7 @@ func evaluateHandshake(deviceAddr string, connections []ConnectionInfo) Lifecycl
 		if c.DeviceSource != deviceAddr && c.DeviceDest != deviceAddr {
 			continue
 		}
+		step.MessageID = c.LastMessageID
 		if c.CurrentState == "data" {
 			step.Status = StepPass
 			step.Details = "Connection reached data state"
@@ -153,6 +158,7 @@ func evaluateDiscovery(deviceAddr, ucAbbr string, devices []DeviceInfo) Lifecycl
 			continue
 		}
 		deviceFound = true
+		step.MessageID = dev.LastDiscoveryMessageID
 		for _, ent := range dev.Entities {
 			if !matchesEntityType(ent.EntityType, spec.EntityTypes) {
 				continue
@@ -200,8 +206,8 @@ func evaluateDiscovery(deviceAddr, ucAbbr string, devices []DeviceInfo) Lifecycl
 	return step
 }
 
-func evaluateAnnounced(uc UseCaseInfo) LifecycleStep {
-	step := LifecycleStep{Name: "UC Announced"}
+func evaluateAnnounced(uc UseCaseInfo, messageID int64) LifecycleStep {
+	step := LifecycleStep{Name: "UC Announced", MessageID: messageID}
 
 	if uc.Available {
 		step.Status = StepPass
@@ -223,11 +229,20 @@ func evaluateSubscriptions(deviceAddr string, spec UseCaseLifecycleSpec, hasSpec
 		return step
 	}
 
-	// Find active subscriptions for this device's feature types
+	// Find active subscriptions for this device's feature types, and pick a
+	// representative messageId (prefer active; fall back to any observed
+	// subscription attempt for the device).
 	activeTypes := make(map[string]bool)
 	for _, sub := range subscriptions {
-		if sub.ServerDevice == deviceAddr && sub.Active && sub.ServerFeatureType != "" {
+		if sub.ServerDevice != deviceAddr {
+			continue
+		}
+		if step.MessageID == 0 {
+			step.MessageID = sub.MessageID
+		}
+		if sub.Active && sub.ServerFeatureType != "" {
 			activeTypes[sub.ServerFeatureType] = true
+			step.MessageID = sub.MessageID
 		}
 	}
 
@@ -265,11 +280,20 @@ func evaluateBindings(deviceAddr string, spec UseCaseLifecycleSpec, hasSpec bool
 		return step
 	}
 
-	// Find active bindings for this device's feature types
+	// Find active bindings for this device's feature types, and pick a
+	// representative messageId (prefer active; fall back to any observed
+	// binding attempt for the device).
 	activeTypes := make(map[string]bool)
 	for _, b := range bindings {
-		if b.ServerDevice == deviceAddr && b.Active && b.ServerFeatureType != "" {
+		if b.ServerDevice != deviceAddr {
+			continue
+		}
+		if step.MessageID == 0 {
+			step.MessageID = b.MessageID
+		}
+		if b.Active && b.ServerFeatureType != "" {
 			activeTypes[b.ServerFeatureType] = true
+			step.MessageID = b.MessageID
 		}
 	}
 

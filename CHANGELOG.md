@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Click-to-jump on chart datapoints**: clicking a point in any time-series
+  chart navigates to the trace page with the corresponding message selected,
+  scrolled into view, and the detail panel open. Uses a new
+  `?msg=<id>` query parameter on the trace page, consumed once by the
+  virtual-scroll table after summaries load. Hover cursor changes to a
+  pointer over clickable points; the tooltip footer shows
+  "click to open message" as an affordance. Backed by the existing
+  `messageId` field already returned per `TimeseriesDataPoint`.
+- **Click-to-jump on lifecycle checklist steps**: each step in the Insights →
+  Lifecycle view now carries the messageId of the evidence that produced its
+  status (handshake state transition, discovery reply, use-case announcement,
+  subscription/binding event). Clicking a step navigates to the trace page and
+  opens the corresponding message. Steps show a subtle jump arrow (↱) and
+  hover affordance when a jump target is available.
+- **Export filtered messages as CSV or JSON**: new
+  `GET /api/traces/{id}/messages/export?format=csv|json&<filters>` endpoint
+  streams the filtered message set as a downloadable file. Accepts the same
+  filter query params as `/messages` (search, cmdClassifier, functionSet,
+  device, timeFrom/timeTo, etc.). The trace actions menu (⋮) now offers
+  "Export current view (CSV)" and "Export current view (JSON)" entries that
+  reuse the active table filter, so users can pull the exact rows they're
+  looking at into a spreadsheet or downstream script.
+- **`eebustracer devices <file>` CLI command**: prints a per-device summary
+  of a `.eet` or `.log` trace — every device seen on the wire, its
+  entity/feature tree from `NodeManagementDetailedDiscoveryData` replies,
+  and the EEBus use cases it announced. Supports `--output json` for
+  machine consumption. Useful for a quick "what is in this capture?"
+  answer without spinning up the web UI.
+
+### Changed
+- Extracted `ParseDiscoveryEntities` and the `DiscoveryEntity` /
+  `DiscoveryFeature` types into the `internal/spineparse` package so the
+  new CLI and the existing HTTP handlers can share a single implementation.
+  The api-layer `parseDiscoveryEntities` is now a thin adapter over that
+  shared parser.
+
+### Changed
+- `LifecycleStep` (analysis package) gained a `MessageID int64` field
+  (JSON: `messageId`, omitempty). `ConnectionInfo` gained `LastMessageID`;
+  `DeviceInfo` gained `LastDiscoveryMessageID`. These are populated by the
+  API layer so lifecycle evaluators can attach evidence anchors.
+
 ## [0.7.0] - 2026-07-23
 
 ### Added

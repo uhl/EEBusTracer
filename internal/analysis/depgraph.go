@@ -45,6 +45,10 @@ type DependencyTree struct {
 type DeviceInfo struct {
 	DeviceAddr string
 	Entities   []EntityInfo
+	// LastDiscoveryMessageID is the ID of the most recent discovery message
+	// that contributed to this device's entity tree. Used as evidence anchor
+	// for the Feature Discovery lifecycle step.
+	LastDiscoveryMessageID int64
 }
 
 // EntityInfo describes an entity within a device.

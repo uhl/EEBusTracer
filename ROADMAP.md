@@ -181,7 +181,7 @@ modules. No forking required.
 
 ### Pending
 
-- [ ] Click a failed lifecycle step to jump to the relevant message
+- [x] Click a lifecycle step to jump to the evidence message (done post-v0.7.0)
 
 ---
 
@@ -225,7 +225,9 @@ modules. No forking required.
 
 ### Export & Reporting
 
-- [ ] Export filtered message set to JSON / CSV
+- [x] Export filtered message set to JSON / CSV (via
+      `GET /api/traces/{id}/messages/export?format=csv|json` and the
+      trace actions menu; post-v0.7.0)
 - [ ] Generate summary report (HTML/PDF): devices found, use cases,
       errors, connection timeline, key measurements
 - [ ] Shareable `.eet` trace files with annotations included
@@ -245,7 +247,9 @@ modules. No forking required.
 ### CLI Enhancements
 
 - [ ] `eebustracer export trace.eet --format csv` — export to CSV
-- [ ] `eebustracer devices trace.eet` — list discovered devices
+      (in-browser export already available; standalone CLI still pending)
+- [x] `eebustracer devices trace.eet` — list discovered devices with
+      entity/feature tree and announced use cases (post-v0.7.0)
 - [ ] CI/CD integration for EEBus device testing pipelines
 
 ### Wireshark Dissector (Companion)

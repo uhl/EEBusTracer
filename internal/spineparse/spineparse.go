@@ -8,7 +8,117 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"strconv"
 )
+
+// DiscoveryEntity is a single entity extracted from a
+// NodeManagementDetailedDiscoveryData payload.
+type DiscoveryEntity struct {
+	Address    string             `json:"address"`
+	EntityType string             `json:"entityType,omitempty"`
+	Features   []DiscoveryFeature `json:"features,omitempty"`
+}
+
+// DiscoveryFeature is a single feature attached to a DiscoveryEntity.
+type DiscoveryFeature struct {
+	Address     string   `json:"address"`
+	FeatureType string   `json:"featureType,omitempty"`
+	Role        string   `json:"role,omitempty"`
+	Functions   []string `json:"functions,omitempty"`
+}
+
+// ParseDiscoveryEntities extracts the entity/feature tree from a SPINE
+// payload containing a NodeManagementDetailedDiscoveryData reply/notify.
+// Returns nil if the payload doesn't contain a parseable discovery command.
+func ParseDiscoveryEntities(spinePayload json.RawMessage) []DiscoveryEntity {
+	cmds, err := ExtractCmdArray(spinePayload)
+	if err != nil {
+		return nil
+	}
+
+	for _, cmd := range cmds {
+		var cmdMap map[string]json.RawMessage
+		if err := json.Unmarshal(cmd, &cmdMap); err != nil {
+			continue
+		}
+
+		raw, ok := cmdMap["nodeManagementDetailedDiscoveryData"]
+		if !ok {
+			continue
+		}
+
+		var discovery struct {
+			EntityInformation []struct {
+				Description *struct {
+					EntityAddress *struct {
+						Entity json.RawMessage `json:"entity"`
+					} `json:"entityAddress"`
+					EntityType *string `json:"entityType"`
+				} `json:"description"`
+			} `json:"entityInformation"`
+			FeatureInformation []struct {
+				Description *struct {
+					FeatureAddress *struct {
+						Entity  json.RawMessage `json:"entity"`
+						Feature *int            `json:"feature"`
+					} `json:"featureAddress"`
+					FeatureType       *string `json:"featureType"`
+					Role              *string `json:"role"`
+					SupportedFunction []struct {
+						Function *string `json:"function"`
+					} `json:"supportedFunction"`
+				} `json:"description"`
+			} `json:"featureInformation"`
+		}
+		if err := json.Unmarshal(raw, &discovery); err != nil {
+			continue
+		}
+
+		entityMap := make(map[string]*DiscoveryEntity)
+		var entities []DiscoveryEntity
+
+		for _, ei := range discovery.EntityInformation {
+			if ei.Description == nil || ei.Description.EntityAddress == nil {
+				continue
+			}
+			addr := string(ei.Description.EntityAddress.Entity)
+			entity := DiscoveryEntity{Address: addr}
+			if ei.Description.EntityType != nil {
+				entity.EntityType = *ei.Description.EntityType
+			}
+			entities = append(entities, entity)
+			entityMap[addr] = &entities[len(entities)-1]
+		}
+
+		for _, fi := range discovery.FeatureInformation {
+			if fi.Description == nil || fi.Description.FeatureAddress == nil {
+				continue
+			}
+			feature := DiscoveryFeature{}
+			if fi.Description.FeatureAddress.Feature != nil {
+				feature.Address = strconv.Itoa(*fi.Description.FeatureAddress.Feature)
+			}
+			if fi.Description.FeatureType != nil {
+				feature.FeatureType = *fi.Description.FeatureType
+			}
+			if fi.Description.Role != nil {
+				feature.Role = *fi.Description.Role
+			}
+			for _, sf := range fi.Description.SupportedFunction {
+				if sf.Function != nil {
+					feature.Functions = append(feature.Functions, *sf.Function)
+				}
+			}
+			if e, ok := entityMap[string(fi.Description.FeatureAddress.Entity)]; ok {
+				e.Features = append(e.Features, feature)
+			}
+		}
+
+		return entities
+	}
+
+	return nil
+}
 
 // ExtractionDescriptor parameterizes the generic extraction of data items from
 // a SPINE payload. Each descriptor identifies which JSON keys to look for

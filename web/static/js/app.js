@@ -378,6 +378,19 @@
         });
     }
 
+    // Parse ?msg=<id> from the URL (used by charts to deep-link to a
+    // specific message). Stored globally so fetchSummaries can consume it
+    // once the summary list is populated.
+    if (typeof window.TRACE_ID !== 'undefined') {
+        var msgParam = new URLSearchParams(window.location.search).get('msg');
+        if (msgParam) {
+            var msgId = parseInt(msgParam, 10);
+            if (!isNaN(msgId) && msgId > 0) {
+                window._pendingJumpMsgId = msgId;
+            }
+        }
+    }
+
     // Auto-connect if on a trace page and capturing
     if (typeof window.TRACE_ID !== 'undefined') {
         fetch('/api/capture/status')
@@ -497,6 +510,14 @@
             // suppressed if the snapshot already contains it.
             seenMessageIds = new Set();
             (summaries || []).forEach(function(m) { if (m.id) seenMessageIds.add(m.id); });
+            // Deep-link support: ?msg=<id> in the URL means "jump to this
+            // message after summaries are loaded." Used by the charts page
+            // when the user clicks a datapoint. Consumed once per load.
+            var pendingJumpMsg = window._pendingJumpMsgId;
+            if (pendingJumpMsg) {
+                window._pendingJumpMsgId = null;
+                window.jumpToMessageId(pendingJumpMsg);
+            }
             // Track unfiltered total for the filter indicator
             if (!isFiltered) {
                 unfilteredCount = vs.data.length;
@@ -1525,6 +1546,21 @@ function categoryAbbr(cat) {
             dropdown.classList.remove('open');
             btn.classList.remove('open');
         });
+
+        // Export current view (CSV/JSON) — mirrors the active table filter so
+        // users can pull whatever they're looking at into a spreadsheet or
+        // downstream script without also downloading unmatched messages.
+        function exportCurrentView(format) {
+            if (typeof window.TRACE_ID === 'undefined') return;
+            var params = (typeof buildFilterParams === 'function') ? buildFilterParams() : new URLSearchParams();
+            params.set('format', format);
+            window.location.href = '/api/traces/' + window.TRACE_ID +
+                '/messages/export?' + params.toString();
+        }
+        var csvBtn = document.getElementById('btn-export-view-csv');
+        var jsonBtn = document.getElementById('btn-export-view-json');
+        if (csvBtn) csvBtn.addEventListener('click', function() { exportCurrentView('csv'); });
+        if (jsonBtn) jsonBtn.addEventListener('click', function() { exportCurrentView('json'); });
     })();
 
     // --- Resizable Detail Panel ---
@@ -1926,6 +1962,24 @@ function categoryAbbr(cat) {
         var item = vs.getItem(newIndex);
         if (item) showDetail(item.traceId, item.id);
     }
+
+    // jumpToMessageId scrolls the table to the message with the given DB id,
+    // selects it, and opens the detail pane. Exposed on window so other
+    // pages (e.g. the charts page) can navigate here with `?msg=<id>` and
+    // trigger a jump after summaries load.
+    window.jumpToMessageId = function(id) {
+        if (!vs || !id) return false;
+        for (var i = 0; i < vs.data.length; i++) {
+            var item = vs.data[i];
+            if (item.id === id) {
+                vs.setSelectedIndex(i);
+                vs.scrollToIndex(i);
+                showDetail(item.traceId, item.id);
+                return true;
+            }
+        }
+        return false;
+    };
 
     function openJumpDialog() {
         var overlay = document.getElementById('jump-dialog');
