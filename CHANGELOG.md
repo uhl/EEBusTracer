@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-17
+
 ### Added
 - **evcc log format import**: TRACE-level output from the open-source
   [evcc](https://evcc.io/) EV charging controller can now be dropped into
@@ -16,10 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   attaches the peer SKI as a fallback device address when SPINE headers
   omit it. Non-wire TRACE lines (SHIP state transitions, ski
   registration) are silently skipped.
-
-## [0.7.1] - 2026-07-24
-
-### Added
 - **Click-to-jump on chart datapoints**: clicking a point in any time-series
   chart navigates to the trace page with the corresponding message selected,
   scrolled into view, and the detail panel open. Uses a new
