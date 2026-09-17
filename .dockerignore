@@ -1,0 +1,10 @@
+.git
+.github
+build/
+dist/
+docs/screenshots/
+*.db
+*.eet
+*.log
+.DS_Store
+**/.DS_Store

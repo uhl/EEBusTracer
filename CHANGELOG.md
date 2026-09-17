@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-24
+
 ### Added
 - **Click-to-jump on chart datapoints**: clicking a point in any time-series
   chart navigates to the trace page with the corresponding message selected,
@@ -43,12 +45,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   new CLI and the existing HTTP handlers can share a single implementation.
   The api-layer `parseDiscoveryEntities` is now a thin adapter over that
   shared parser.
-
-### Changed
 - `LifecycleStep` (analysis package) gained a `MessageID int64` field
   (JSON: `messageId`, omitempty). `ConnectionInfo` gained `LastMessageID`;
   `DeviceInfo` gained `LastDiscoveryMessageID`. These are populated by the
   API layer so lifecycle evaluators can attach evidence anchors.
+- **Release packaging**: the GitHub release workflow now publishes
+  per-platform archives (`tar.gz` for macOS/Linux, `zip` for Windows)
+  bundling the binary alongside `LICENSE`, `README.md`, and `CHANGELOG.md`,
+  plus a `SHA256SUMS` manifest. Replaces the previous bare-binary uploads.
+- **Docker image**: multi-arch `linux/amd64` + `linux/arm64` image published
+  to `ghcr.io/uhl/eebustracer` on every push to `main` (as `latest`) and on
+  every release tag (as `vX.Y.Z`, `X.Y`, `X`, and `latest`). Runs as a
+  non-root user on a distroless base; the DB lives in the `/data` volume.
+- **Homebrew tap**: new `packaging/homebrew/eebustracer.rb.tmpl` template
+  is rendered on each release and pushed to the `uhl/homebrew-eebustracer`
+  tap so users can `brew tap uhl/eebustracer && brew install eebustracer`.
 
 ## [0.7.0] - 2026-07-23
 

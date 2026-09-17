@@ -153,16 +153,51 @@ conformance checks, dependency tree, and write tracking. See
 
 ---
 
+## Installation
+
+Pre-built binaries for macOS, Linux, and Windows (amd64 + arm64) are
+attached to every [release](https://github.com/uhl/EEBusTracer/releases).
+Download the archive for your platform, extract, and run:
+
+```bash
+tar -xzf eebustracer-vX.Y.Z-linux-amd64.tar.gz
+cd eebustracer-vX.Y.Z-linux-amd64
+./eebustracer serve
+```
+
+Checksums for every archive are in the `SHA256SUMS` file attached to the
+release.
+
+### Homebrew (macOS + Linux)
+
+```bash
+brew tap uhl/eebustracer
+brew install eebustracer
+```
+
+### Docker
+
+```bash
+docker run --rm -p 8080:8080 -v eebustracer-data:/data \
+  ghcr.io/uhl/eebustracer:latest
+# open http://localhost:8080
+```
+
+The image publishes `latest` (main branch) and `vX.Y.Z` / `X.Y` / `X` tags
+for each release. Traces persist in the `/data` volume.
+
+### From source
+
+See [Building](#building) below.
+
+---
+
 ## Quick start
 
 Bring the web UI up against a local `dlt-daemon` (default port 3490), the
 most common workflow for wallboxes and HEMS gateways:
 
 ```bash
-git clone https://github.com/<org>/eebustracer.git
-cd eebustracer
-go build -o eebustracer ./cmd/eebustracer
-
 ./eebustracer serve --port 8080
 # open http://localhost:8080
 # in the top bar, pick "DLT", enter host+port, optionally a filter like

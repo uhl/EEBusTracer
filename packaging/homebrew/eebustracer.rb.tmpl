@@ -1,0 +1,36 @@
+class Eebustracer < Formula
+  desc "Cross-platform trace recording and analysis tool for the EEBus protocol (SHIP + SPINE)"
+  homepage "https://github.com/uhl/EEBusTracer"
+  version "__VERSION__"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/uhl/EEBusTracer/releases/download/v__VERSION__/eebustracer-v__VERSION__-darwin-arm64.tar.gz"
+      sha256 "__SHA_DARWIN_ARM64__"
+    end
+    on_intel do
+      url "https://github.com/uhl/EEBusTracer/releases/download/v__VERSION__/eebustracer-v__VERSION__-darwin-amd64.tar.gz"
+      sha256 "__SHA_DARWIN_AMD64__"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/uhl/EEBusTracer/releases/download/v__VERSION__/eebustracer-v__VERSION__-linux-arm64.tar.gz"
+      sha256 "__SHA_LINUX_ARM64__"
+    end
+    on_intel do
+      url "https://github.com/uhl/EEBusTracer/releases/download/v__VERSION__/eebustracer-v__VERSION__-linux-amd64.tar.gz"
+      sha256 "__SHA_LINUX_AMD64__"
+    end
+  end
+
+  def install
+    bin.install "eebustracer"
+  end
+
+  test do
+    assert_match "eebustracer #{version}", shell_output("#{bin}/eebustracer version")
+  end
+end

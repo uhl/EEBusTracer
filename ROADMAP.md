@@ -240,9 +240,13 @@ modules. No forking required.
 
 ### Release Packaging
 
-- [ ] Cross-compile binaries via `goreleaser`
-- [ ] Homebrew formula (`brew install eebustracer`)
-- [ ] Docker image for headless capture / CI usage
+- [x] Cross-compile binaries for macOS / Linux / Windows (amd64+arm64) via
+      GitHub Actions matrix, packaged as `.tar.gz` / `.zip` with
+      `SHA256SUMS` (post-v0.7.0)
+- [x] Homebrew formula published via the `uhl/homebrew-eebustracer` tap,
+      auto-updated on each release (post-v0.7.0)
+- [x] Multi-arch Docker image at `ghcr.io/uhl/eebustracer` for headless
+      capture / CI usage (post-v0.7.0)
 
 ### CLI Enhancements
 

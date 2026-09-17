@@ -63,11 +63,32 @@ jobs:
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
           go build -ldflags "-s -w -X main.Version=${{ steps.tag.outputs.tag }}" \
-            -o "eebustracer-${GOOS}-${GOARCH}${EXT}" ./cmd/eebustracer
+            -o "eebustracer${EXT}" ./cmd/eebustracer
+      - name: Package archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          STAGE="eebustracer-${TAG}-${GOOS}-${GOARCH}"
+          mkdir -p "$STAGE"
+          if [ "$GOOS" = "windows" ]; then
+            cp eebustracer.exe "$STAGE/"
+          else
+            cp eebustracer "$STAGE/"
+          fi
+          cp LICENSE README.md CHANGELOG.md "$STAGE/"
+          if [ "$GOOS" = "windows" ]; then
+            zip -r "${STAGE}.zip" "$STAGE"
+          else
+            tar -czf "${STAGE}.tar.gz" "$STAGE"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: eebustracer-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: eebustracer-*
+          path: |
+            eebustracer-*.tar.gz
+            eebustracer-*.zip
 
   release:
     needs: [build]
@@ -79,11 +100,14 @@ jobs:
         with:
           path: artifacts
 
-      - name: Collect binaries
+      - name: Collect archives and build SHA256SUMS
         run: |
           mkdir -p release
-          find artifacts -type f -name 'eebustracer-*' -exec cp {} release/ \;
-          ls -lh release/
+          find artifacts -type f \( -name 'eebustracer-*.tar.gz' -o -name 'eebustracer-*.zip' \) \
+            -exec cp {} release/ \;
+          cd release
+          sha256sum eebustracer-*.tar.gz eebustracer-*.zip > SHA256SUMS
+          ls -lh
 
       - name: Determine version tag
         id: tag
@@ -108,7 +132,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ steps.tag.outputs.tag }}" \
-            release/eebustracer-* --clobber
+            release/eebustracer-*.tar.gz \
+            release/eebustracer-*.zip \
+            release/SHA256SUMS --clobber
 
       - name: Create release (triggered by tag push)
         if: github.event_name == 'push'
@@ -116,6 +142,85 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ steps.tag.outputs.tag }}" \
-            release/eebustracer-* \
+            release/eebustracer-*.tar.gz \
+            release/eebustracer-*.zip \
+            release/SHA256SUMS \
             --title "${{ steps.tag.outputs.tag }}" \
             --notes-file release_notes.md
+
+  homebrew-tap:
+    needs: [release]
+    runs-on: ubuntu-latest
+    # Skip on forks and when the tap token isn't configured.
+    if: github.repository == 'uhl/EEBusTracer'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ steps.version.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern SHA256SUMS \
+            --output SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Render formula
+        id: render
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sha() { awk -v f="$1" '$2 == f {print $1}' SHA256SUMS; }
+          SHA_DARWIN_ARM64=$(sha "eebustracer-${TAG}-darwin-arm64.tar.gz")
+          SHA_DARWIN_AMD64=$(sha "eebustracer-${TAG}-darwin-amd64.tar.gz")
+          SHA_LINUX_ARM64=$(sha "eebustracer-${TAG}-linux-arm64.tar.gz")
+          SHA_LINUX_AMD64=$(sha "eebustracer-${TAG}-linux-amd64.tar.gz")
+          for name in SHA_DARWIN_ARM64 SHA_DARWIN_AMD64 SHA_LINUX_ARM64 SHA_LINUX_AMD64; do
+            val=$(eval echo \$$name)
+            if [ -z "$val" ]; then
+              echo "missing checksum for $name" >&2
+              exit 1
+            fi
+          done
+          sed \
+            -e "s|__VERSION__|${VERSION}|g" \
+            -e "s|__SHA_DARWIN_ARM64__|${SHA_DARWIN_ARM64}|g" \
+            -e "s|__SHA_DARWIN_AMD64__|${SHA_DARWIN_AMD64}|g" \
+            -e "s|__SHA_LINUX_ARM64__|${SHA_LINUX_ARM64}|g" \
+            -e "s|__SHA_LINUX_AMD64__|${SHA_LINUX_AMD64}|g" \
+            packaging/homebrew/eebustracer.rb.tmpl > eebustracer.rb
+          cat eebustracer.rb
+
+      - name: Push formula to tap repo
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/uhl/homebrew-eebustracer.git" tap
+          mkdir -p tap/Formula
+          cp eebustracer.rb tap/Formula/eebustracer.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Formula already up-to-date, nothing to push."
+            exit 0
+          fi
+          git add Formula/eebustracer.rb
+          git commit -m "eebustracer ${TAG}"
+          git push
