@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **evcc log format import**: TRACE-level output from the open-source
+  [evcc](https://evcc.io/) EV charging controller can now be dropped into
+  EEBusTracer directly. The importer auto-detects the `[eebus ] TRACE
+  YYYY/MM/DD HH:MM:SS Send:|Recv: <SKI> <payload>` line shape, extracts
+  SHIP init frames as well as SHIP control and SPINE data messages, and
+  attaches the peer SKI as a fallback device address when SPINE headers
+  omit it. Non-wire TRACE lines (SHIP state transitions, ski
+  registration) are silently skipped.
+
 ## [0.7.1] - 2026-07-24
 
 ### Added

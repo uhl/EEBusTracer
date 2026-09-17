@@ -65,6 +65,7 @@ const (
 	LogFormatEEBusTester            // eebustester log format
 	LogFormatEEBusHub              // EEBus Hub log format
 	LogFormatDLTText               // DLT Viewer plain-text export
+	LogFormatEVCC                  // evcc TRACE log format
 )
 
 // EEBusHubLogRegex matches EEBus Hub log lines:
@@ -76,6 +77,21 @@ var EEBusHubLogRegex = regexp.MustCompile(
 
 // eebushubPrefixRegex detects lines starting with the EEBus Hub timestamp format.
 var eebushubPrefixRegex = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+\[(Send|Recv)\]`)
+
+// EVCCLogRegex matches evcc TRACE lines carrying SHIP/SPINE wire content:
+//
+//	[eebus ] TRACE 2026/09/16 20:47:09 Send: <SKI> ship init
+//	[eebus ] TRACE 2026/09/16 20:47:09 Recv: <SKI> {"connectionHello":[...]}
+//	[eebus ] TRACE 2026/09/16 20:47:09 Send: <SKI> {"data":[...]}
+//
+// Non-wire TRACE lines (SHIP state transitions, ski registration, etc.) do
+// not match and are silently skipped by the importer.
+var EVCCLogRegex = regexp.MustCompile(
+	`^\[eebus\s*\]\s+TRACE\s+(\d{4}/\d{2}/\d{2})\s+(\d{2}:\d{2}:\d{2})\s+(Send|Recv):\s+([0-9a-fA-F]{40})\s+(ship init|\{.*)$`,
+)
+
+// evccPrefixRegex detects lines starting with the evcc [eebus] TRACE prefix.
+var evccPrefixRegex = regexp.MustCompile(`^\[eebus\s*\]\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+\d{4}/\d{2}/\d{2}`)
 
 // DetectLogFormat examines the first lines of content to determine the log format.
 func DetectLogFormat(content string) LogFormat {
@@ -103,6 +119,9 @@ func DetectLogFormat(content string) LogFormat {
 		}
 		if eebustesterPrefixRegex.MatchString(line) {
 			return LogFormatEEBusTester
+		}
+		if evccPrefixRegex.MatchString(line) {
+			return LogFormatEVCC
 		}
 		if eebusgoPrefixRegex.MatchString(line) {
 			return LogFormatEEBusGo
@@ -151,6 +170,12 @@ func ParseEEBusTesterTimestamp(dateStr, timeStr string) (time.Time, error) {
 // into a time.Time in UTC.
 func ParseEEBusHubTimestamp(dateStr, timeStr string) (time.Time, error) {
 	return time.Parse("2006-01-02 15:04:05", dateStr+" "+timeStr)
+}
+
+// ParseEVCCTimestamp parses an evcc TRACE date+time pair (YYYY/MM/DD + HH:MM:SS)
+// into a time.Time in UTC.
+func ParseEVCCTimestamp(dateStr, timeStr string) (time.Time, error) {
+	return time.Parse("2006/01/02 15:04:05", dateStr+" "+timeStr)
 }
 
 // ExtractPeerDevice extracts a device name from a ship peer identifier

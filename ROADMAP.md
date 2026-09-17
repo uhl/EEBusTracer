@@ -256,6 +256,12 @@ modules. No forking required.
       entity/feature tree and announced use cases (post-v0.7.0)
 - [ ] CI/CD integration for EEBus device testing pipelines
 
+### Log Format Support
+
+- [x] evcc TRACE log import — auto-detected from `[eebus ] TRACE ...
+      Send:/Recv: <SKI> <payload>` prefix; extracts SHIP init frames,
+      SHIP control JSON, and SPINE data envelopes (post-v0.7.0)
+
 ### Wireshark Dissector (Companion)
 
 - [ ] Lua dissector for SHIP protocol in Wireshark

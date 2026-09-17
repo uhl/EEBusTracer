@@ -78,8 +78,9 @@ conformance checks, dependency tree, and write tracking. See
   tail (eebus-go / eebustester / CEasierLogger), and **live DLT streaming**
   from `dlt-daemon` (port 3490) with APID/CTID filter and auto-reconnect.
 - **File import (auto-detected by content):** `.eet` native trace format,
-  eebus-go / eebustester / EEBus Hub log formats, **DLT plain-text exports**,
-  and **binary `.dlt` files** with `DLT\x01` magic.
+  eebus-go / eebustester / EEBus Hub / **evcc** log formats,
+  **DLT plain-text exports**, and **binary `.dlt` files** with `DLT\x01`
+  magic.
 - **mDNS device discovery** for `_ship._tcp` services on the local network.
 - **Drag-and-drop import** in the web UI; `.eet` export for sharing traces.
 - Truncated-payload counter (DLT commonly cuts long JSON mid-value):
@@ -211,6 +212,7 @@ Or import a trace file you already have:
 ./eebustracer import /path/to/dltviewer-export.log # DLT text export
 ./eebustracer import /path/to/trace.eet            # native format
 ./eebustracer import /path/to/eebustester.log      # eebustester log
+./eebustracer import /path/to/evcc.log             # evcc TRACE log
 ```
 
 ---

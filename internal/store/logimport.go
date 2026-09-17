@@ -296,6 +296,101 @@ func ImportEEBusHubLogFile(r io.Reader, name string) (*model.Trace, []*model.Mes
 	return trace, messages, nil
 }
 
+// ImportEVCCLogFile parses an evcc (open-source EV charging controller) trace
+// log into a trace and messages. Only TRACE lines carrying wire content
+// (Send:/Recv: with a SHIP init frame or JSON payload) are extracted; all
+// other lines (state transitions, DEBUG/INFO messages, non-eebus modules)
+// are silently skipped.
+func ImportEVCCLogFile(r io.Reader, name string) (*model.Trace, []*model.Message, error) {
+	p := parser.New()
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+
+	var messages []*model.Message
+	var firstTS, lastTS time.Time
+	seqNum := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		matches := parser.EVCCLogRegex.FindStringSubmatch(line)
+		if matches == nil {
+			continue
+		}
+
+		seqNum++
+		dateStr := matches[1]
+		timeStr := matches[2]
+		direction := matches[3]
+		ski := matches[4]
+		payload := matches[5]
+
+		ts, err := parser.ParseEVCCTimestamp(dateStr, timeStr)
+		if err != nil {
+			continue
+		}
+
+		if firstTS.IsZero() {
+			firstTS = ts
+		}
+		lastTS = ts
+
+		var dir model.Direction
+		if direction == "Send" {
+			dir = model.DirectionOutgoing
+		} else {
+			dir = model.DirectionIncoming
+		}
+
+		var msg *model.Message
+		if payload == "ship init" {
+			// SHIP init frame — no JSON payload, but record it as a SHIP init
+			// message so the connection lifecycle picks it up.
+			msg = &model.Message{
+				SequenceNum: seqNum,
+				Timestamp:   ts,
+				Direction:   dir,
+				ShipMsgType: model.ShipMsgTypeInit,
+			}
+		} else {
+			normalized := parser.NormalizeEEBUSJSON([]byte(payload))
+			msg = buildMessageFromJSON(p, normalized, seqNum, ts, dir, "")
+		}
+
+		// Use SKI as fallback peer device when SPINE didn't provide it.
+		if dir == model.DirectionOutgoing && msg.DeviceDest == "" {
+			msg.DeviceDest = ski
+		} else if dir == model.DirectionIncoming && msg.DeviceSource == "" {
+			msg.DeviceSource = ski
+		}
+
+		messages = append(messages, msg)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, nil, fmt.Errorf("scan log file: %w", err)
+	}
+
+	if len(messages) == 0 {
+		return nil, nil, fmt.Errorf("no valid evcc log lines found")
+	}
+
+	trace := &model.Trace{
+		Name:         name,
+		StartedAt:    firstTS,
+		MessageCount: len(messages),
+		CreatedAt:    time.Now(),
+	}
+	if !lastTS.IsZero() {
+		trace.StoppedAt = &lastTS
+	}
+
+	return trace, messages, nil
+}
+
 // ImportDLTTextLogFile parses a DLT Viewer plain-text export into a trace.
 // Only lines that carry an EEBus JSON payload (detected via known ECU-specific
 // patterns or generic SHIP/SPINE prefix scan) are ingested; all other DLT
@@ -443,8 +538,9 @@ func ImportDLTBinaryFile(r io.Reader, name string) (*model.Trace, []*model.Messa
 	return trace, messages, nil
 }
 
-// ImportLogFileAutoDetect reads a .log file, detects its format (eebus-go, eebustester,
-// or EEBus Hub), and delegates to the appropriate importer.
+// ImportLogFileAutoDetect reads a .log file, detects its format (eebus-go,
+// eebustester, EEBus Hub, DLT Viewer text export, or evcc), and delegates
+// to the appropriate importer.
 func ImportLogFileAutoDetect(r io.Reader, name string) (*model.Trace, []*model.Message, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -469,6 +565,8 @@ func ImportLogFileAutoDetect(r io.Reader, name string) (*model.Trace, []*model.M
 		return ImportEEBusHubLogFile(reader, name)
 	case parser.LogFormatDLTText:
 		return ImportDLTTextLogFile(reader, name)
+	case parser.LogFormatEVCC:
+		return ImportEVCCLogFile(reader, name)
 	default:
 		return nil, nil, fmt.Errorf("unrecognized log format")
 	}
@@ -507,6 +605,8 @@ func ImportFileAutoDetect(r io.Reader, name string) (*model.Trace, []*model.Mess
 		return ImportEEBusHubLogFile(reader, name)
 	case parser.LogFormatDLTText:
 		return ImportDLTTextLogFile(reader, name)
+	case parser.LogFormatEVCC:
+		return ImportEVCCLogFile(reader, name)
 	default:
 		// Fall back to EET format
 		return ImportTrace(reader)

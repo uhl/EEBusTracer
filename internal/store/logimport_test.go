@@ -679,6 +679,151 @@ func TestImportDLTBinaryFile(t *testing.T) {
 	}
 }
 
+const testEVCCLogData = `[main  ] INFO 2026/09/16 20:47:07 evcc 0.315.0
+[eebus ] INFO 2026/09/16 20:47:07 Local SKI: 5bd049d3bb608a38671000339f356abd2088efb8
+[eebus ] TRACE 2026/09/16 20:47:07 registering ski: 1e3591a76a965342f59263570581e57f60c83913
+[eebus ] TRACE 2026/09/16 20:47:09 Send: 1e3591a76a965342f59263570581e57f60c83913 ship init
+[eebus ] TRACE 2026/09/16 20:47:09 Recv: 1e3591a76a965342f59263570581e57f60c83913 ship init
+[eebus ] TRACE 2026/09/16 20:47:09 1e3591a76a965342f59263570581e57f60c83913 SHIP state changed to: 8
+[eebus ] TRACE 2026/09/16 20:47:09 Send: 1e3591a76a965342f59263570581e57f60c83913 {"connectionHello":[{"phase":"ready"},{"waiting":60000}]}
+[eebus ] TRACE 2026/09/16 20:47:09 Recv: 1e3591a76a965342f59263570581e57f60c83913 {"connectionHello":[{"phase":"ready"},{"waiting":60000}]}
+[eebus ] TRACE 2026/09/16 20:47:09 Send: 1e3591a76a965342f59263570581e57f60c83913 {"data":[{"header":[{"protocolId":"ee1.0"}]},{"payload":{"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_n:EVCC_HEMS-EVCC-3733353763306331"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"entity":[0]},{"feature":0}]},{"msgCounter":1},{"cmdClassifier":"read"}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}}]}
+[eebus ] TRACE 2026/09/16 20:47:09 Recv: 1e3591a76a965342f59263570581e57f60c83913 {"data":[{"header":[{"protocolId":"ee1.0"}]},{"payload":{"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:3210_Elli-00015609"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"entity":[0]},{"feature":0}]},{"msgCounter":394782},{"cmdClassifier":"read"},{"ackRequest":true}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}}]}
+`
+
+func TestImportEVCCLogFile(t *testing.T) {
+	trace, messages, err := ImportEVCCLogFile(strings.NewReader(testEVCCLogData), "evcc-test")
+	if err != nil {
+		t.Fatalf("ImportEVCCLogFile failed: %v", err)
+	}
+
+	if trace.Name != "evcc-test" {
+		t.Errorf("trace name = %q, want %q", trace.Name, "evcc-test")
+	}
+	// 2 ship init + 2 connectionHello + 2 data = 6 message lines. Non-TRACE
+	// lines, the state-change line, and the "registering ski" TRACE without
+	// Send:/Recv: prefix should all be skipped.
+	if trace.MessageCount != 6 {
+		t.Errorf("trace.MessageCount = %d, want 6", trace.MessageCount)
+	}
+	if len(messages) != 6 {
+		t.Fatalf("len(messages) = %d, want 6", len(messages))
+	}
+
+	// m0: Send ship init → outgoing, SHIP init type, peer SKI as DeviceDest.
+	m0 := messages[0]
+	if m0.SequenceNum != 1 {
+		t.Errorf("m0.SequenceNum = %d, want 1", m0.SequenceNum)
+	}
+	if m0.Direction != model.DirectionOutgoing {
+		t.Errorf("m0.Direction = %q, want %q", m0.Direction, model.DirectionOutgoing)
+	}
+	if m0.ShipMsgType != model.ShipMsgTypeInit {
+		t.Errorf("m0.ShipMsgType = %q, want %q", m0.ShipMsgType, model.ShipMsgTypeInit)
+	}
+	if m0.DeviceDest != "1e3591a76a965342f59263570581e57f60c83913" {
+		t.Errorf("m0.DeviceDest = %q, want peer SKI", m0.DeviceDest)
+	}
+	if m0.Timestamp.Year() != 2026 || m0.Timestamp.Month() != 9 || m0.Timestamp.Day() != 16 {
+		t.Errorf("m0.Timestamp date = %v, want 2026-09-16", m0.Timestamp.Format("2006-01-02"))
+	}
+	if m0.Timestamp.Hour() != 20 || m0.Timestamp.Minute() != 47 || m0.Timestamp.Second() != 9 {
+		t.Errorf("m0.Timestamp time = %v, want 20:47:09", m0.Timestamp.Format("15:04:05"))
+	}
+
+	// m1: Recv ship init → incoming, peer SKI as DeviceSource.
+	m1 := messages[1]
+	if m1.Direction != model.DirectionIncoming {
+		t.Errorf("m1.Direction = %q, want %q", m1.Direction, model.DirectionIncoming)
+	}
+	if m1.ShipMsgType != model.ShipMsgTypeInit {
+		t.Errorf("m1.ShipMsgType = %q, want %q", m1.ShipMsgType, model.ShipMsgTypeInit)
+	}
+	if m1.DeviceSource != "1e3591a76a965342f59263570581e57f60c83913" {
+		t.Errorf("m1.DeviceSource = %q, want peer SKI", m1.DeviceSource)
+	}
+
+	// m2: Send connectionHello — SHIP control JSON.
+	m2 := messages[2]
+	if m2.ShipMsgType != model.ShipMsgTypeConnectionHello {
+		t.Errorf("m2.ShipMsgType = %q, want %q", m2.ShipMsgType, model.ShipMsgTypeConnectionHello)
+	}
+
+	// m4: Send SPINE data envelope — read of nodeManagementDetailedDiscoveryData.
+	m4 := messages[4]
+	if m4.ShipMsgType != model.ShipMsgTypeData {
+		t.Errorf("m4.ShipMsgType = %q, want %q", m4.ShipMsgType, model.ShipMsgTypeData)
+	}
+	if m4.CmdClassifier != "read" {
+		t.Errorf("m4.CmdClassifier = %q, want %q", m4.CmdClassifier, "read")
+	}
+	if m4.FunctionSet != "NodeManagementDetailedDiscoveryData" {
+		t.Errorf("m4.FunctionSet = %q, want %q", m4.FunctionSet, "NodeManagementDetailedDiscoveryData")
+	}
+	if m4.MsgCounter != "1" {
+		t.Errorf("m4.MsgCounter = %q, want %q", m4.MsgCounter, "1")
+	}
+	// SPINE payload identifies the local endpoint (EVCC HEMS) so the SKI
+	// fallback should not overwrite DeviceSource.
+	if m4.DeviceSource != "d:_n:EVCC_HEMS-EVCC-3733353763306331" {
+		t.Errorf("m4.DeviceSource = %q, want EVCC HEMS device", m4.DeviceSource)
+	}
+
+	// m5: Recv reciprocal read from the wallbox.
+	m5 := messages[5]
+	if m5.Direction != model.DirectionIncoming {
+		t.Errorf("m5.Direction = %q, want %q", m5.Direction, model.DirectionIncoming)
+	}
+	if m5.DeviceSource != "d:_i:3210_Elli-00015609" {
+		t.Errorf("m5.DeviceSource = %q, want wallbox device", m5.DeviceSource)
+	}
+}
+
+func TestImportEVCCLogFile_Empty(t *testing.T) {
+	_, _, err := ImportEVCCLogFile(strings.NewReader(""), "empty")
+	if err == nil {
+		t.Error("expected error for empty file")
+	}
+}
+
+func TestImportEVCCLogFile_NoWireContent(t *testing.T) {
+	// Only non-wire TRACE lines and other levels — nothing importable.
+	data := `[main  ] INFO 2026/09/16 20:47:07 evcc 0.315.0
+[eebus ] TRACE 2026/09/16 20:47:07 registering ski: 1e3591a76a965342f59263570581e57f60c83913
+[eebus ] TRACE 2026/09/16 20:47:09 1e3591a76a965342f59263570581e57f60c83913 SHIP state changed to: 8
+`
+	_, _, err := ImportEVCCLogFile(strings.NewReader(data), "no-wire")
+	if err == nil {
+		t.Error("expected error for file with no wire content")
+	}
+}
+
+func TestImportLogFileAutoDetect_EVCC(t *testing.T) {
+	trace, messages, err := ImportLogFileAutoDetect(strings.NewReader(testEVCCLogData), "auto-evcc")
+	if err != nil {
+		t.Fatalf("ImportLogFileAutoDetect failed: %v", err)
+	}
+	if trace.Name != "auto-evcc" {
+		t.Errorf("trace name = %q, want %q", trace.Name, "auto-evcc")
+	}
+	if len(messages) != 6 {
+		t.Errorf("len(messages) = %d, want 6", len(messages))
+	}
+}
+
+func TestImportFileAutoDetect_EVCC(t *testing.T) {
+	trace, messages, err := ImportFileAutoDetect(strings.NewReader(testEVCCLogData), "auto-file-evcc")
+	if err != nil {
+		t.Fatalf("ImportFileAutoDetect failed: %v", err)
+	}
+	if trace.Name != "auto-file-evcc" {
+		t.Errorf("trace name = %q, want %q", trace.Name, "auto-file-evcc")
+	}
+	if len(messages) != 6 {
+		t.Errorf("len(messages) = %d, want 6", len(messages))
+	}
+}
+
 func TestImportFileAutoDetect_DLTBinary(t *testing.T) {
 	eebusPayload := `[ConnectionWorker 1] Received 100 Data bytes during ConnectionDataExchange: {"datagram":[{"header":[{"specificationVersion":"1.3.0"},{"addressSource":[{"device":"d:_i:EV"},{"entity":[0]},{"feature":0}]},{"addressDestination":[{"device":"d:_i:CEM"},{"entity":[0]},{"feature":0}]},{"msgCounter":42},{"cmdClassifier":"reply"}]},{"payload":[{"cmd":[[{"nodeManagementDetailedDiscoveryData":[]}]]}]}]}`
 	frame := buildDLTFrame(t, "CEM", "CEM", eebusPayload)

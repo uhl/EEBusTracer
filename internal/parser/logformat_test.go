@@ -332,6 +332,16 @@ func TestDetectLogFormat(t *testing.T) {
 			content: "15 [11:38:26.008] SEND to ship_Device_0xabc MSG: {}\n",
 			want:    LogFormatEEBusGo,
 		},
+		{
+			name:    "evcc format",
+			content: "[main  ] INFO 2026/09/16 20:47:07 evcc 0.315.0\n[eebus ] TRACE 2026/09/16 20:47:09 Send: 1e3591a76a965342f59263570581e57f60c83913 ship init\n",
+			want:    LogFormatEVCC,
+		},
+		{
+			name:    "evcc format detected on first eebus line",
+			content: "[eebus ] TRACE 2026/09/16 20:47:09 Recv: 1e3591a76a965342f59263570581e57f60c83913 {\"connectionHello\":[]}\n",
+			want:    LogFormatEVCC,
+		},
 	}
 
 	for _, tt := range tests {
@@ -423,6 +433,120 @@ func TestEEBusHubLogRegex(t *testing.T) {
 				t.Errorf("json = %q, want %q", matches[5], tt.wantJSON)
 			}
 		})
+	}
+}
+
+func TestEVCCLogRegex(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantNil  bool
+		wantDate string
+		wantTime string
+		wantDir  string
+		wantSKI  string
+		wantJSON string
+	}{
+		{
+			name:     "Send ship init",
+			input:    `[eebus ] TRACE 2026/09/16 20:47:09 Send: 1e3591a76a965342f59263570581e57f60c83913 ship init`,
+			wantDate: "2026/09/16",
+			wantTime: "20:47:09",
+			wantDir:  "Send",
+			wantSKI:  "1e3591a76a965342f59263570581e57f60c83913",
+			wantJSON: "ship init",
+		},
+		{
+			name:     "Send SHIP control JSON",
+			input:    `[eebus ] TRACE 2026/09/16 20:47:09 Send: 1e3591a76a965342f59263570581e57f60c83913 {"connectionHello":[{"phase":"ready"},{"waiting":60000}]}`,
+			wantDate: "2026/09/16",
+			wantTime: "20:47:09",
+			wantDir:  "Send",
+			wantSKI:  "1e3591a76a965342f59263570581e57f60c83913",
+			wantJSON: `{"connectionHello":[{"phase":"ready"},{"waiting":60000}]}`,
+		},
+		{
+			name:     "Recv SPINE data envelope",
+			input:    `[eebus ] TRACE 2026/09/16 20:47:09 Recv: 1e3591a76a965342f59263570581e57f60c83913 {"data":[{"header":[{"protocolId":"ee1.0"}]}]}`,
+			wantDate: "2026/09/16",
+			wantTime: "20:47:09",
+			wantDir:  "Recv",
+			wantSKI:  "1e3591a76a965342f59263570581e57f60c83913",
+			wantJSON: `{"data":[{"header":[{"protocolId":"ee1.0"}]}]}`,
+		},
+		{
+			name:    "SHIP state change line (skipped)",
+			input:   `[eebus ] TRACE 2026/09/16 20:47:09 1e3591a76a965342f59263570581e57f60c83913 SHIP state changed to: 8`,
+			wantNil: true,
+		},
+		{
+			name:    "non-eebus module line",
+			input:   `[main  ] INFO 2026/09/16 20:47:07 evcc 0.315.0`,
+			wantNil: true,
+		},
+		{
+			name:    "DEBUG line (not TRACE)",
+			input:   `[eebus ] DEBUG 2026/09/16 20:47:09 initiating connection to abc at wallbox.local.:4711/ship/`,
+			wantNil: true,
+		},
+		{
+			name:    "SKI too short",
+			input:   `[eebus ] TRACE 2026/09/16 20:47:09 Send: 1e35 ship init`,
+			wantNil: true,
+		},
+		{
+			name:    "empty line",
+			input:   "",
+			wantNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches := EVCCLogRegex.FindStringSubmatch(tt.input)
+			if tt.wantNil {
+				if matches != nil {
+					t.Errorf("expected nil match, got %v", matches)
+				}
+				return
+			}
+			if matches == nil {
+				t.Fatal("expected match, got nil")
+			}
+			if matches[1] != tt.wantDate {
+				t.Errorf("date = %q, want %q", matches[1], tt.wantDate)
+			}
+			if matches[2] != tt.wantTime {
+				t.Errorf("time = %q, want %q", matches[2], tt.wantTime)
+			}
+			if matches[3] != tt.wantDir {
+				t.Errorf("dir = %q, want %q", matches[3], tt.wantDir)
+			}
+			if matches[4] != tt.wantSKI {
+				t.Errorf("ski = %q, want %q", matches[4], tt.wantSKI)
+			}
+			if matches[5] != tt.wantJSON {
+				t.Errorf("json = %q, want %q", matches[5], tt.wantJSON)
+			}
+		})
+	}
+}
+
+func TestParseEVCCTimestamp(t *testing.T) {
+	ts, err := ParseEVCCTimestamp("2026/09/16", "20:47:09")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := time.Date(2026, time.September, 16, 20, 47, 9, 0, time.UTC)
+	if !ts.Equal(want) {
+		t.Errorf("timestamp = %v, want %v", ts, want)
+	}
+
+	if _, err := ParseEVCCTimestamp("bad", "20:47:09"); err == nil {
+		t.Error("expected error for bad date")
+	}
+	if _, err := ParseEVCCTimestamp("2026/09/16", "bad"); err == nil {
+		t.Error("expected error for bad time")
 	}
 }
 
